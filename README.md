@@ -4,11 +4,11 @@
 [![Java](https://img.shields.io/badge/Java-21-orange.svg)](https://openjdk.org/projects/jdk/21/)
 [![CI](https://github.com/guptagautam768/jvm-llm-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/guptagautam768/jvm-llm-gateway/actions/workflows/ci.yml)
 
-OpenAI-compatible LLM gateway for the JVM. Application teams point an OpenAI SDK at one base URL; the gateway owns provider access, and later routing, resilience, tenancy, caching, guardrails, and a usage ledger.
+OpenAI-compatible LLM gateway for the JVM. Application teams point an OpenAI SDK at one base URL. The gateway owns provider access, routing, and resilience. Tenancy, caching, guardrails, and a usage ledger come later.
 
 This is a portfolio project for Gautam Gupta. It is platform infrastructure, not a RAG or agent product.
 
-Requirements: [SDR-0001](docs/sdr/0001-jvm-llm-gateway-sdr.md) (APPROVED v1.0). Decisions: [ADR index](docs/adr/README.md) (ADR-0001 through ADR-0011, all Accepted).
+Requirements: [SDR-0001](docs/sdr/0001-jvm-llm-gateway-sdr.md) (APPROVED v1.0). Decisions: [ADR index](docs/adr/README.md) (ADR-0001 through ADR-0012 Accepted; ADR-0013 Proposed for the Anthropic adapter).
 
 ## Week 1 status
 
@@ -17,15 +17,33 @@ Milestone: **skeleton + passthrough**.
 Shipped:
 
 - `POST /v1/chat/completions` for a normal JSON response and for SSE when `stream` is true, including the terminal `data: [DONE]` event.
-- `GET /v1/models`.
-- One provider, OpenAI, behind the `ProviderClient` port (`chat`, `stream`, `embed`, `capabilities`). Anthropic and Ollama ids are reserved; only OpenAI is implemented.
+- `GET /v1/models` (week 1 forwarded OpenAI's list; week 2 serves the routing table).
+- OpenAI behind the `ProviderClient` port (`chat`, `stream`, `embed`, `capabilities`). Anthropic was added in week 2. The Ollama id is still reserved.
 - Provider API key from `OPENAI_API_KEY`. It is never written to the repo.
 - Actuator `health`, `info`, `metrics`, and `prometheus` on port **8081** only. The API port does not serve them.
 - Docker Compose for Redis Stack, Postgres 16, and Ollama, plus a Dockerfile for the gateway. Week 1 code does not connect to those data services yet.
 - Unit tests and a WireMock test that proves non-streaming and streaming passthrough without calling OpenAI.
 - GitHub Actions runs `./gradlew build` on push and pull request and uploads the JaCoCo report.
 
-Not in this milestone (see the roadmap): caller API keys, YAML aliases, fallback, Resilience4j, embeddings HTTP route, Redis cache, budgets, PII redaction, and the Postgres ledger.
+Week 1 did not include caller API keys, YAML aliases, fallback, Resilience4j, the embeddings route, Redis cache, budgets, PII redaction, or the Postgres ledger. Aliases, fallback, Resilience4j, and Anthropic shipped in week 2.
+
+## Week 2 status
+
+Milestone: **routing and resilience**.
+
+Shipped:
+
+- YAML aliases under `gateway.routes`. A client `model` of `fast` or `smart` walks that alias's ordered targets. A concrete model name that appears on exactly one provider calls that provider only, with `gateway.resilience` as the timeout and retry, and does not borrow another alias's fallback chain.
+- Resilience4j per target, outermost first: time limiter, circuit breaker, retry (ADR-0005). One breaker per `(provider, model)`. 4xx other than 429 is returned as-is and is not retried or fallen back. 429, 5xx, 529, connection failure, and timeout fall through the chain. After the chain is exhausted, 5xx and connection failures are **502** `upstream_unavailable`, timeouts are **504** `provider_timeout`, and an open breaker with nowhere left to go is **502** `circuit_open`. A provider 429 that survives the chain stays **429**.
+- Streaming may fall back only before the first chunk. After that, a failure ends the stream with an error event and no `data: [DONE]`.
+- Anthropic chat, including SSE, behind the same `ProviderClient` port. The edge stays OpenAI-shaped. The API key is `ANTHROPIC_API_KEY`. See [ADR-0013](docs/adr/0013-anthropic-adapter-direct-webclient.md) (Proposed) for why this adapter is WebClient rather than Spring AI.
+- `GET /v1/models` lists configured aliases, then the concrete models on those routes. It does not call a provider.
+
+Still later: Ollama (FR-012), `POST /v1/embeddings` (FR-002), caller API keys, Redis cache, budgets, PII redaction, and the Postgres ledger.
+
+The route timeout is the deadline for one target, including its retries. The next target gets its own deadline. Worst case for an alias is about `targets × timeout` when every target hangs. `fast` in the shipped file is two targets and 30s, so a fully hung route is about 60s before **504**. A 4xx fails immediately.
+
+Resilience4j records one circuit-breaker result for the whole retry sequence (the breaker wraps the retry, as ADR-0005's decorator order says). A retry is not a second increment of the failure count.
 
 ## Architecture
 
@@ -33,9 +51,11 @@ Not in this milestone (see the roadmap): caller API keys, YAML aliases, fallback
 flowchart LR
   client["OpenAI SDK or curl"]
   app["gateway-app\nWebFlux :8080"]
-  core["gateway-core\nProviderClient"]
+  route["alias router\nResilience4j"]
   openai["OpenAI adapter\nWebClient"]
-  upstream["api.openai.com"]
+  anthropic["Anthropic adapter\nWebClient"]
+  openaiApi["api.openai.com"]
+  anthropicApi["api.anthropic.com"]
   actuator["Actuator :8081\nhealth and metrics"]
   redis[("Redis Stack")]
   postgres[("Postgres 16")]
@@ -43,25 +63,27 @@ flowchart LR
 
   client -->|POST /v1/chat/completions| app
   client -->|GET /v1/models| app
-  app --> core
-  core --> openai
-  openai -->|HTTPS| upstream
+  app --> route
+  route --> openai
+  route --> anthropic
+  openai -->|HTTPS| openaiApi
+  anthropic -->|HTTPS| anthropicApi
   app -.-> actuator
   redis -.-> app
   postgres -.-> app
   ollama -.-> app
 ```
 
-Solid arrows are the week-1 request path. Dashed arrows are present in Compose or on the management port and are not on the chat path yet.
+Solid arrows are the chat path. Dashed arrows are present in Compose or on the management port and are not on the chat path yet. Ollama is in Compose only.
 
 Module layout (ADR-0002):
 
-| Module | Week 1 |
+| Module | Role |
 |---|---|
 | `gateway-app` | Spring Boot application, WebFlux handlers, actuator, wiring |
 | `gateway-api` | OpenAI wire DTOs and the error body |
-| `gateway-core` | `ProviderClient` port, registry, request validation. No web types |
-| `gateway-providers` | OpenAI adapter |
+| `gateway-core` | `ProviderClient` port, registry, alias router, Resilience4j guard. No web types |
+| `gateway-providers` | OpenAI and Anthropic adapters |
 | `gateway-cache` | Placeholder for ADR-0006 |
 | `gateway-tenancy` | Placeholder for ADR-0007 |
 | `gateway-persistence` | Placeholder for ADR-0008 |
@@ -75,13 +97,39 @@ Requirements: Java 21, and Docker with Compose if you want the dependency stack 
 ```bash
 git clone https://github.com/guptagautam768/jvm-llm-gateway.git
 cd jvm-llm-gateway
-export OPENAI_API_KEY=sk-...   # raw key, not a Bearer prefix
+export OPENAI_API_KEY=sk-...          # raw key, not a Bearer prefix
+export ANTHROPIC_API_KEY=sk-ant-...   # optional; needed for Anthropic targets
 docker compose up --build
 ```
 
-Compose publishes the API on port 8080 and the management port on `127.0.0.1:8081` only. Postgres, Redis Stack, and Ollama start beside the app. Week 1 ignores them; a chat call still goes to OpenAI.
+Compose publishes the API on port 8080 and the management port on `127.0.0.1:8081` only. Postgres, Redis Stack, and Ollama start beside the app. Chat does not use them yet.
 
-Non-streaming chat:
+The shipped aliases are illustrative (ADR-0005). `fast` tries OpenAI `gpt-4o-mini`, then Anthropic `claude-haiku-4-5`. `smart` tries OpenAI `gpt-4o`, then Anthropic `claude-sonnet-4-5`. Edit `gateway.routes` in `gateway-app/src/main/resources/application.yml` and restart. A target whose provider has no API key is skipped. If every target is missing a key, the client gets **503** `provider_not_configured`.
+
+```yaml
+gateway:
+  routes:
+    fast:
+      targets:
+        - { provider: openai, model: gpt-4o-mini }
+        - { provider: anthropic, model: claude-haiku-4-5 }
+      timeout: 30s
+      retry: { max-attempts: 2, backoff: 200ms, multiplier: 2 }
+```
+
+`max-attempts` includes the first call, so `2` means one retry. The backoff is the first wait; later waits grow by `multiplier`. The circuit breaker is global under `gateway.resilience.circuit-breaker`, one instance per `(provider, model)`.
+
+Alias chat:
+
+```bash
+curl -s http://localhost:8080/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"fast","messages":[{"role":"user","content":"Say hello in one sentence."}]}'
+```
+
+The JSON `model` in the response is the alias you sent. The provider is called with the concrete model.
+
+A concrete name still works when it is configured on one provider:
 
 ```bash
 curl -s http://localhost:8080/v1/chat/completions \
@@ -110,12 +158,15 @@ Run the gateway on the host instead of in a container:
 
 ```bash
 export OPENAI_API_KEY=sk-...
+export ANTHROPIC_API_KEY=sk-ant-...   # optional
 ./gradlew :gateway-app:bootRun
 ```
 
-`OPENAI_BASE_URL` overrides the provider origin (default `https://api.openai.com`). Paths are `/v1/chat/completions` and `/v1/models`, so the base URL should not already include `/v1`.
+`OPENAI_BASE_URL` overrides the OpenAI origin (default `https://api.openai.com`). Paths are `/v1/chat/completions` and, for the adapter only, `/v1/models`. The base URL should not already include `/v1`. `ANTHROPIC_BASE_URL` overrides the Anthropic origin (default `https://api.anthropic.com`); the adapter posts to `/v1/messages`.
 
-If `OPENAI_API_KEY` is missing, the process still starts and chat or models return **503** `provider_not_configured`. A missing `model` or `messages` field returns **400** `invalid_request`. Provider HTTP errors are returned with the upstream status and the OpenAI error body. Connection failures are **502**. Timeouts are **504**.
+`GET /v1/models` is served from the routing table, so it works without a provider key. An unknown `model` is **400** `invalid_request`. A missing `model` or `messages` field is the same. A 4xx from a provider, other than 429, is returned with that status and the provider error body (Anthropic errors are rewritten into the OpenAI error shape). 429 is retried and then falls back. After the chain is exhausted, provider 5xx and connection failures are **502**, and timeouts are **504**. A missing key for the only target is **503**.
+
+Anthropic requires `max_tokens`. If the client sends neither `max_tokens` nor `max_completion_tokens`, the gateway sends `gateway.providers.anthropic.default-max-tokens` (4096). Text content is translated. `n` greater than 1, and non-text content parts, are **400**. Tools, penalties, and `response_format` are not forwarded to Anthropic.
 
 Logs are JSON in Elastic Common Schema and do not include prompt text. Shutdown is graceful (`server.shutdown=graceful`).
 
@@ -125,7 +176,7 @@ Logs are JSON in Elastic Common Schema and do not include prompt text. Shutdown 
 ./gradlew build
 ```
 
-WireMock stands in for OpenAI. `./gradlew build` also writes per-module JaCoCo reports and an aggregate at `build/reports/jacoco/jacocoRootReport/`. There is no coverage gate yet; ADR-0011 sets that after a baseline.
+WireMock stands in for OpenAI and Anthropic. `./gradlew build` also writes per-module JaCoCo reports and an aggregate at `build/reports/jacoco/jacocoRootReport/`. There is no coverage gate yet; ADR-0011 sets that after a baseline.
 
 ## Wire format
 
@@ -137,7 +188,7 @@ Unknown JSON fields are ignored and are not forwarded (FR-001, the "ignore" opti
 
 | Week | Milestone | What it adds |
 |---|---|---|
-| 2 | Routing and resilience | YAML aliases and fallback chains, Resilience4j retry, circuit breaker, and time limiter (ADR-0005). Anthropic and Ollama adapters, then the embeddings route (ADR-0004, FR-002). |
+| 2 | Routing and resilience | **Done:** YAML aliases, ordered fallback, Resilience4j retry / circuit breaker / time limiter (ADR-0005), Anthropic chat and SSE. **Still open:** Ollama (FR-012) and `POST /v1/embeddings` (FR-002). |
 | 3 | Tenancy and limits | Hashed API keys, Postgres tenants, Redis token bucket, token and dollar budgets, 429 contract (ADR-0007). Usage ledger schema and 30-day retention (ADR-0008). |
 | 4 | Semantic cache | Redis exact-match and vector cache, TTL plus a size bound, `X-Cache-Bypass` (ADR-0006). |
 | 5 | Guardrails and observability | PII redact-and-forward (ADR-0009), request size limits, the remaining Micrometer series, OpenTelemetry traces, Grafana dashboard (ADR-0010). |
