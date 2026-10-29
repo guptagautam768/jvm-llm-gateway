@@ -22,6 +22,8 @@ class MissingApiKeyTest {
     static void properties(DynamicPropertyRegistry registry) {
         registry.add("gateway.providers.openai.api-key", () -> "");
         registry.add("gateway.providers.openai.base-url", () -> "http://127.0.0.1:9");
+        registry.add("gateway.providers.anthropic.api-key", () -> "");
+        registry.add("gateway.providers.anthropic.base-url", () -> "http://127.0.0.1:9");
     }
 
     @Test

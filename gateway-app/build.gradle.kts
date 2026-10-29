@@ -19,6 +19,7 @@ dependencies {
 
     testImplementation(libs.spring.boot.starter.test)
     testImplementation(libs.wiremock)
+    testImplementation(libs.resilience4j.circuitbreaker)
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 

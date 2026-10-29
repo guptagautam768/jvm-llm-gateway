@@ -12,7 +12,8 @@ public final class ProviderException extends RuntimeException {
         TIMEOUT,
         UPSTREAM,
         UNSUPPORTED,
-        MALFORMED
+        MALFORMED,
+        CIRCUIT_OPEN
     }
 
     private final String providerId;
@@ -102,6 +103,54 @@ public final class ProviderException extends RuntimeException {
                 null,
                 providerId + " returned a malformed response: " + detail,
                 cause);
+    }
+
+    public static ProviderException circuitOpen(String providerId) {
+        return withGatewayBody(
+                providerId,
+                Kind.CIRCUIT_OPEN,
+                502,
+                "circuit_open",
+                "The circuit breaker is open for " + providerId + ".");
+    }
+
+    /**
+     * Chain exhausted on a provider failure that ADR-0005 maps to 502.
+     * The body is an OpenAI-shaped gateway error, not the upstream payload.
+     */
+    public static ProviderException exhausted(String providerId) {
+        return withGatewayBody(
+                providerId,
+                Kind.UPSTREAM,
+                502,
+                "upstream_unavailable",
+                "Upstream providers failed after retries and fallbacks.");
+    }
+
+    private static ProviderException withGatewayBody(
+            String providerId,
+            Kind kind,
+            int status,
+            String code,
+            String message
+    ) {
+        return new ProviderException(
+                providerId,
+                kind,
+                status,
+                errorBody(message, code),
+                null,
+                message,
+                null);
+    }
+
+    private static String errorBody(String message, String code) {
+        return "{\"error\":{\"message\":\"" + escape(message) + "\",\"type\":\"server_error\",\"code\":\""
+                + escape(code) + "\"}}";
+    }
+
+    private static String escape(String value) {
+        return value.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     public String providerId() {

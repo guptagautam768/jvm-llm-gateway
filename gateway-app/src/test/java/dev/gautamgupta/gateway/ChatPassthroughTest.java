@@ -2,8 +2,6 @@ package dev.gautamgupta.gateway;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
-import static com.github.tomakehurst.wiremock.client.WireMock.get;
-import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
 import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
@@ -46,6 +44,8 @@ class ChatPassthroughTest {
     static void properties(DynamicPropertyRegistry registry) {
         registry.add("gateway.providers.openai.base-url", () -> "http://127.0.0.1:" + WIRE_MOCK.port());
         registry.add("gateway.providers.openai.api-key", () -> "sk-test");
+        registry.add("gateway.providers.anthropic.base-url", () -> "http://127.0.0.1:" + WIRE_MOCK.port());
+        registry.add("gateway.providers.anthropic.api-key", () -> "sk-ant-test");
         registry.add("management.server.port", () -> "0");
         // Boot's test observability customizer turns export off. Re-enable Prometheus for this test.
         registry.add("management.prometheus.metrics.export.enabled", () -> "true");
@@ -150,26 +150,21 @@ class ChatPassthroughTest {
     }
 
     @Test
-    void modelsListIsPassedThrough() {
-        WIRE_MOCK.stubFor(get(urlEqualTo("/v1/models"))
-                .willReturn(aResponse()
-                        .withStatus(200)
-                        .withHeader("Content-Type", "application/json")
-                        .withBody("""
-                                {"object":"list","data":[{"id":"gpt-4o-mini","object":"model","created":1,"owned_by":"openai"}]}
-                                """)));
-
+    void modelsListReflectsConfiguredAliases() {
         webTestClient.get()
                 .uri("/v1/models")
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.object").isEqualTo("list")
-                .jsonPath("$.data[0].id").isEqualTo("gpt-4o-mini")
-                .jsonPath("$.data[0].owned_by").isEqualTo("openai");
+                .jsonPath("$.data[0].id").isEqualTo("fast")
+                .jsonPath("$.data[0].object").isEqualTo("model")
+                .jsonPath("$.data[0].owned_by").isEqualTo("openai")
+                .jsonPath("$.data[?(@.id == 'smart')].owned_by").isEqualTo("openai")
+                .jsonPath("$.data[?(@.id == 'claude-haiku-4-5')].owned_by").isEqualTo("anthropic")
+                .jsonPath("$.data[?(@.id == 'gpt-4o-mini')].owned_by").isEqualTo("openai");
 
-        WIRE_MOCK.verify(getRequestedFor(urlEqualTo("/v1/models"))
-                .withHeader("Authorization", equalTo("Bearer sk-test")));
+        assertThat(WIRE_MOCK.getAllServeEvents()).isEmpty();
     }
 
     @Test
@@ -195,6 +190,61 @@ class ChatPassthroughTest {
                 .expectBody()
                 .jsonPath("$.error.code").isEqualTo("invalid_api_key")
                 .jsonPath("$.error.type").isEqualTo("invalid_request_error");
+        assertThat(WIRE_MOCK.getAllServeEvents()).hasSize(1);
+    }
+
+    @Test
+    void upstreamServerErrorBecomes502AfterTheChain() {
+        WIRE_MOCK.stubFor(post(urlEqualTo("/v1/chat/completions"))
+                .willReturn(aResponse()
+                        .withStatus(500)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("""
+                                {"error":{"message":"overloaded","type":"server_error","code":"internal"}}
+                                """)));
+
+        webTestClient.post()
+                .uri("/v1/chat/completions")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"model":"gpt-4o-mini","messages":[{"role":"user","content":"Hello"}]}
+                        """)
+                .exchange()
+                .expectStatus().isEqualTo(502)
+                .expectBody()
+                .jsonPath("$.error.code").isEqualTo("upstream_unavailable");
+    }
+
+    @Test
+    void streamErrorAfterAChunkIsAnErrorEvent() {
+        WIRE_MOCK.stubFor(post(urlEqualTo("/v1/chat/completions"))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "text/event-stream")
+                        .withBody("""
+                                data: {"id":"chatcmpl-test","object":"chat.completion.chunk","created":1,"model":"gpt-4o-mini","choices":[{"index":0,"delta":{"content":"Hi"}}]}
+
+                                data: {"error":{"message":"boom","type":"server_error"}}
+
+                                """)));
+
+        String body = webTestClient.post()
+                .uri("/v1/chat/completions")
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.TEXT_EVENT_STREAM)
+                .bodyValue("""
+                        {"model":"gpt-4o-mini","stream":true,"messages":[{"role":"user","content":"Hello"}]}
+                        """)
+                .exchange()
+                .expectStatus().isOk()
+                .expectHeader().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM)
+                .returnResult(String.class)
+                .getResponseBody()
+                .collectList()
+                .map(parts -> String.join("", parts))
+                .block(Duration.ofSeconds(10));
+
+        assertThat(body).contains("Hi").contains("upstream_unavailable").doesNotContain("[DONE]");
     }
 
     @Test

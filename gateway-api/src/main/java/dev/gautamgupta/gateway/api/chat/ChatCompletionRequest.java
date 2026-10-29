@@ -39,6 +39,30 @@ public record ChatCompletionRequest(
         messages = messages == null ? List.of() : List.copyOf(messages);
     }
 
+    public ChatCompletionRequest withModel(String model) {
+        return new ChatCompletionRequest(
+                model,
+                messages,
+                temperature,
+                topP,
+                n,
+                stream,
+                streamOptions,
+                stop,
+                maxTokens,
+                maxCompletionTokens,
+                presencePenalty,
+                frequencyPenalty,
+                user,
+                responseFormat,
+                seed,
+                tools,
+                toolChoice,
+                parallelToolCalls,
+                logprobs,
+                topLogprobs);
+    }
+
     public ChatCompletionRequest withStream(Boolean stream) {
         return new ChatCompletionRequest(
                 model,
