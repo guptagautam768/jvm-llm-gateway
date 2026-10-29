@@ -1,0 +1,16 @@
+jvm-llm-gateway
+Copyright 2026 Gautam Gupta
+
+This product is licensed under the Apache License, Version 2.0.
+You may obtain a copy of the License in the LICENSE file or at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+This project's license is Apache-2.0 (SDR-0001 RD-002, ADR-0011).
+
+Redis Stack modules used by the local development image
+redis/redis-stack-server (RediSearch and related modules) are NOT
+licensed under Apache-2.0. They are distributed under the Redis Source
+Available License / SSPL family, with an AGPL option discussed for
+Redis 8. See docs/adr/0006-caching-redis-exact-and-semantic.md.
+The gateway source does not vendor those modules.
