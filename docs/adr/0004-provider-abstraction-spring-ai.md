@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | Accepted (approved by Gautam Gupta, 29 Oct 2026) |
+| **Status** | Accepted (approved by Gautam Gupta, 29 Oct 2026). Partially superseded by [ADR-0012](./0012-openai-adapter-direct-webclient.md): the OpenAI adapter is a direct WebClient. The `ProviderClient` port, and Spring AI for other providers, still stand. |
 | **Date** | 29 Oct 2026 IST |
 | **Deciders** | Gautam Gupta |
 | **Requirements** | [SDR-0001 v1.0](../sdr/0001-jvm-llm-gateway-sdr.md) |
@@ -40,4 +40,5 @@ If Spring AI lacks a field the OpenAI-compatible API needs (API-011/012), the ad
 ## Links
 
 - [SDR-0001](../sdr/0001-jvm-llm-gateway-sdr.md)
+- [ADR-0012](./0012-openai-adapter-direct-webclient.md) — amends the OpenAI implementation only (WebClient, not Spring AI). This ADR's history is unchanged.
 - [ADR index](./README.md)

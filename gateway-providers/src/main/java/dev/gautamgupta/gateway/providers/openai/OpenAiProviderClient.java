@@ -26,10 +26,10 @@ import reactor.core.publisher.Mono;
 /**
  * OpenAI chat and model-list adapter.
  *
- * <p>ADR-0004 puts Spring AI behind {@link ProviderClient}. Week 1 calls the OpenAI
- * REST API with {@link WebClient} so the gateway forwards the wire format and tests
- * can stub it with WireMock. Spring AI types do not enter core. Anthropic and Ollama
- * implement the same port later; embeddings stay on the default method until that route exists.
+ * <p>ADR-0012: this adapter calls the OpenAI REST API with {@link WebClient} so the
+ * wire format survives the hop and WireMock can see it. ADR-0004's {@link ProviderClient}
+ * port is unchanged. Anthropic and Ollama may still use Spring AI behind that port.
+ * Embeddings stay on the default method until that route exists.
  */
 public final class OpenAiProviderClient implements ProviderClient {
 
