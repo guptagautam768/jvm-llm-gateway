@@ -11,6 +11,7 @@ import dev.gautamgupta.gateway.core.provider.ProviderCapabilities;
 import dev.gautamgupta.gateway.core.provider.ProviderClient;
 import dev.gautamgupta.gateway.core.provider.ProviderException;
 import dev.gautamgupta.gateway.core.provider.ProviderIds;
+import dev.gautamgupta.gateway.providers.sse.SseDataDecoder;
 import java.util.concurrent.TimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
