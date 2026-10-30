@@ -46,6 +46,44 @@ logging:
       console: ecs
 
 gateway:
+  # Model names below are illustrative (ADR-0005). An alias uses its timeout and
+  # retry and walks every target. A concrete model name calls that provider only,
+  # with gateway.resilience as the deadline and retry.
+  resilience:
+    timeout: 30s
+    retry:
+      max-attempts: 2
+      backoff: 200ms
+      multiplier: 2
+    circuit-breaker:
+      failure-rate-threshold: 50
+      sliding-window-size: 20
+      minimum-number-of-calls: 10
+      wait-duration-in-open-state: 30s
+      permitted-number-of-calls-in-half-open-state: 3
+  routes:
+    fast:
+      targets:
+        - provider: openai
+          model: gpt-4o-mini
+        - provider: anthropic
+          model: claude-haiku-4-5
+      timeout: 30s
+      retry:
+        max-attempts: 2
+        backoff: 200ms
+        multiplier: 2
+    smart:
+      targets:
+        - provider: openai
+          model: gpt-4o
+        - provider: anthropic
+          model: claude-sonnet-4-5
+      timeout: 60s
+      retry:
+        max-attempts: 2
+        backoff: 200ms
+        multiplier: 2
   providers:
     openai:
       base-url: ${OPENAI_BASE_URL:https://api.openai.com}
@@ -54,6 +92,15 @@ gateway:
       models-path: /v1/models
       connect-timeout: 5s
       response-timeout: 60s
+      max-in-memory-bytes: 2097152
+    anthropic:
+      base-url: ${ANTHROPIC_BASE_URL:https://api.anthropic.com}
+      api-key: ${ANTHROPIC_API_KEY:}
+      messages-path: /v1/messages
+      version: "2023-06-01"
+      connect-timeout: 5s
+      response-timeout: 120s
+      default-max-tokens: 4096
       max-in-memory-bytes: 2097152
 
 info:

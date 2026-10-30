@@ -1,4 +1,4 @@
-package dev.gautamgupta.gateway.providers.openai;
+package dev.gautamgupta.gateway.providers.sse;
 
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;

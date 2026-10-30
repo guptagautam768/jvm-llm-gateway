@@ -12,9 +12,9 @@ import reactor.core.publisher.Mono;
 /**
  * Gateway-owned provider port (ADR-0004).
  *
- * <p>Core and the API modules never see a provider SDK type. Week 1 ships an OpenAI
- * implementation. Anthropic and Ollama implement the same methods later; {@link #embed}
- * is on the port now so embeddings (FR-002) do not require a signature change.
+ * <p>Core and the API modules never see a provider SDK type. OpenAI and Anthropic
+ * implement chat and streaming. Ollama is reserved. {@link #embed} is on the port
+ * so embeddings (FR-002) do not require a signature change.
  */
 public interface ProviderClient {
 

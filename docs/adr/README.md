@@ -16,5 +16,6 @@ Decisions on *how* to build what [SDR-0001 v1.0 (APPROVED)](../sdr/0001-jvm-llm-
 | [0010](./0010-observability-and-operations.md) | Observability and ops: Micrometer, OpenTelemetry, Prometheus/Grafana, actuator on management port | Accepted |
 | [0011](./0011-testing-ci-and-licensing.md) | Testing, CI and licensing: JUnit 5, WireMock, Testcontainers, GitHub Actions, JaCoCo, Apache-2.0 | Accepted |
 | [0012](./0012-openai-adapter-direct-webclient.md) | OpenAI adapter: direct WebClient behind `ProviderClient` | Accepted |
+| [0013](./0013-anthropic-adapter-direct-webclient.md) | Anthropic adapter: direct WebClient and OpenAI wire translation | Accepted |
 
 **Process:** Proposed → reviewed by Gautam Gupta → Accepted / Rejected. No implementation before acceptance. Superseding decisions get a new number.

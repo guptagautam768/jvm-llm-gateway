@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.gautamgupta.gateway.api.error.ApiErrorResponse;
 import dev.gautamgupta.gateway.core.provider.InvalidRequestException;
 import dev.gautamgupta.gateway.core.provider.ProviderException;
+import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.codec.DecodingException;
@@ -123,11 +124,13 @@ public class ApiExceptionHandler {
 
     private static String publicMessage(ProviderException ex) {
         return switch (ex.kind()) {
-            case NOT_CONFIGURED -> "The OpenAI provider is not configured. Set OPENAI_API_KEY.";
+            case NOT_CONFIGURED -> "The " + ex.providerId() + " provider is not configured. Set "
+                    + apiKeyVariable(ex.providerId()) + ".";
             case TIMEOUT -> "The provider timed out.";
             case UNAVAILABLE -> "The provider could not be reached.";
             case MALFORMED -> "The provider returned a response the gateway could not read.";
             case UNSUPPORTED -> "This operation is not implemented for the selected provider.";
+            case CIRCUIT_OPEN -> "The circuit breaker is open.";
             case UPSTREAM -> "The provider returned an error.";
         };
     }
@@ -139,7 +142,16 @@ public class ApiExceptionHandler {
             case UNAVAILABLE -> "provider_unavailable";
             case MALFORMED -> "provider_malformed_response";
             case UNSUPPORTED -> "not_implemented";
+            case CIRCUIT_OPEN -> "circuit_open";
             case UPSTREAM -> "upstream_error";
+        };
+    }
+
+    private static String apiKeyVariable(String providerId) {
+        return switch (providerId) {
+            case "openai" -> "OPENAI_API_KEY";
+            case "anthropic" -> "ANTHROPIC_API_KEY";
+            default -> providerId.toUpperCase(Locale.ROOT) + "_API_KEY";
         };
     }
 

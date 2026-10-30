@@ -1,6 +1,6 @@
 # Local dependencies for jvm-llm-gateway.
 # Redis, Postgres, and Ollama are started so later milestones can use them.
-# Week 1 application code does not connect to them; chat is an OpenAI passthrough.
+# Chat is routed from YAML aliases. Postgres, Redis, and Ollama are not on that path yet.
 name: jvm-llm-gateway
 
 services:
@@ -50,6 +50,8 @@ services:
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
     depends_on:
       - postgres
       - redis

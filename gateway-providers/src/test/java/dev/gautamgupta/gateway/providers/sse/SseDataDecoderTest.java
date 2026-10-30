@@ -1,4 +1,4 @@
-package dev.gautamgupta.gateway.providers.openai;
+package dev.gautamgupta.gateway.providers.sse;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
