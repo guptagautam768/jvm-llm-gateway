@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.gautamgupta.gateway.api.error.ApiErrorResponse;
 import dev.gautamgupta.gateway.core.provider.InvalidRequestException;
 import dev.gautamgupta.gateway.core.provider.ProviderException;
+import dev.gautamgupta.gateway.tenancy.RateLimitHeaders;
+import dev.gautamgupta.gateway.tenancy.error.TenancyException;
 import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,6 +31,25 @@ public class ApiExceptionHandler {
 
     public ApiExceptionHandler(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
+    }
+
+    @ExceptionHandler(TenancyException.class)
+    public ResponseEntity<ApiErrorResponse> tenancy(TenancyException ex) {
+        if (ex.kind() == TenancyException.Kind.DEPENDENCY) {
+            log.error("tenancy dependency failed ({})", ex.getCause() == null ? "unknown" : ex.getCause().getClass().getSimpleName());
+        } else {
+            log.warn("rejected request code={}", ex.code());
+        }
+        ResponseEntity.BodyBuilder builder = ResponseEntity.status(ex.httpStatus()).contentType(MediaType.APPLICATION_JSON);
+        if (ex.retryAfterSeconds() != null && ex.retryAfterSeconds() > 0) {
+            builder.header(HttpHeaders.RETRY_AFTER, Long.toString(ex.retryAfterSeconds()));
+        }
+        if (ex.rateLimit() != null) {
+            builder.header(RateLimitHeaders.LIMIT, Long.toString(ex.rateLimit().limit()));
+            builder.header(RateLimitHeaders.REMAINING, Long.toString(ex.rateLimit().remaining()));
+            builder.header(RateLimitHeaders.RESET, Long.toString(ex.rateLimit().resetEpochSeconds()));
+        }
+        return builder.body(ApiErrorResponse.of(ex.getMessage(), ex.type(), ex.code(), null));
     }
 
     @ExceptionHandler(InvalidRequestException.class)

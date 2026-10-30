@@ -12,6 +12,13 @@ spring:
   jackson:
     property-naming-strategy: SNAKE_CASE
     default-property-inclusion: non_null
+  data:
+    redis:
+      repositories:
+        enabled: false
+    r2dbc:
+      repositories:
+        enabled: false
 
 management:
   server:
@@ -102,6 +109,47 @@ gateway:
       response-timeout: 120s
       default-max-tokens: 4096
       max-in-memory-bytes: 2097152
+  # Caller keys are bootstrapped from the environment and stored as SHA-256 (ADR-0007).
+  # Leave the secret empty to start without a key. Postgres and Redis are required while
+  # tenancy is enabled: SPRING_R2DBC_URL, SPRING_DATASOURCE_URL, SPRING_DATA_REDIS_HOST.
+  tenancy:
+    enabled: true
+    cache-ttl: 30s
+    default-completion-tokens: 256
+    metrics-tenant-tag: false
+    bootstrap:
+      - tenant-id: ${GATEWAY_BOOTSTRAP_TENANT_ID:local}
+        display-name: ${GATEWAY_BOOTSTRAP_TENANT_NAME:Local}
+        status: ${GATEWAY_BOOTSTRAP_TENANT_STATUS:active}
+        keys:
+          - key-id: ${GATEWAY_BOOTSTRAP_KEY_ID:}
+            secret: ${GATEWAY_BOOTSTRAP_KEY_SECRET:}
+        limits:
+          rate-capacity: ${GATEWAY_RATE_CAPACITY:60}
+          rate-refill-per-second: ${GATEWAY_RATE_REFILL_PER_SECOND:1}
+          tokens-per-minute: ${GATEWAY_TOKENS_PER_MINUTE:}
+          token-budget: ${GATEWAY_TOKEN_BUDGET:}
+          cost-budget-micros: ${GATEWAY_COST_BUDGET_MICROS:}
+          budget-window: ${GATEWAY_BUDGET_WINDOW:30d}
+  ledger:
+    retention: ${GATEWAY_LEDGER_RETENTION:30d}
+    precreate-days: 7
+    buffer-size: 1024
+    retention-cron: "0 15 * * * *"
+  # USD per 1K tokens. A model that is missing here is metered with a null cost (FR-071).
+  prices:
+    gpt-4o-mini:
+      prompt-per-1k-usd: "0.00015"
+      completion-per-1k-usd: "0.00060"
+    gpt-4o:
+      prompt-per-1k-usd: "0.00250"
+      completion-per-1k-usd: "0.01000"
+    claude-haiku-4-5:
+      prompt-per-1k-usd: "0.00100"
+      completion-per-1k-usd: "0.00500"
+    claude-sonnet-4-5:
+      prompt-per-1k-usd: "0.00300"
+      completion-per-1k-usd: "0.01500"
 
 info:
   app:
