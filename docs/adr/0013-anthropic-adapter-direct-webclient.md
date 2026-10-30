@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | Proposed |
+| **Status** | Accepted (approved by Gautam Gupta, 30 Oct 2026) |
 | **Date** | 29 Oct 2026 |
 | **Deciders** | Gautam Gupta (not yet accepted) |
 | **Requirements** | [SDR-0001 v1.0](../sdr/0001-jvm-llm-gateway-sdr.md) |
