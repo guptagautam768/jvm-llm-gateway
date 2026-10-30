@@ -11,7 +11,7 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = {"management.server.port=0", OfflineDataStores.EXCLUDE}
+        properties = {"management.server.port=0", OfflineDataStores.EXCLUDE, OfflineDataStores.CACHE_OFF}
 )
 class MissingApiKeyTest {
 

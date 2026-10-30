@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.gautamgupta.gateway.api.chat.ChatCompletionChunk;
 import dev.gautamgupta.gateway.api.chat.ChatCompletionRequest;
 import dev.gautamgupta.gateway.api.chat.ChatCompletionResponse;
+import dev.gautamgupta.gateway.api.embed.EmbeddingRequest;
+import dev.gautamgupta.gateway.api.embed.EmbeddingResponse;
 import dev.gautamgupta.gateway.api.model.ModelListResponse;
 import dev.gautamgupta.gateway.core.provider.ProviderCapabilities;
 import dev.gautamgupta.gateway.core.provider.ProviderClient;
@@ -30,7 +32,8 @@ import reactor.core.publisher.Mono;
  * <p>ADR-0012: this adapter calls the OpenAI REST API with {@link WebClient} so the
  * wire format survives the hop and WireMock can see it. ADR-0004's {@link ProviderClient}
  * port is unchanged. Anthropic and Ollama may still use Spring AI behind that port.
- * Embeddings stay on the default method until that route exists.
+ * {@link #embed} calls {@code /v1/embeddings} for the semantic cache. The public
+ * embeddings route is not exposed.
  */
 public final class OpenAiProviderClient implements ProviderClient {
 
@@ -53,9 +56,8 @@ public final class OpenAiProviderClient implements ProviderClient {
 
     @Override
     public ProviderCapabilities capabilities() {
-        // Embeddings are part of the OpenAI capability matrix (ADR-0004) but the method
-        // is not implemented yet, so the flag stays false until the route exists.
-        return new ProviderCapabilities(true, true, false);
+        // The adapter can embed. POST /v1/embeddings on the gateway is still not exposed.
+        return new ProviderCapabilities(true, true, true);
     }
 
     @Override
@@ -86,6 +88,18 @@ public final class OpenAiProviderClient implements ProviderClient {
                 .accept(MediaType.TEXT_EVENT_STREAM)
                 .bodyValue(request.withStream(true))
                 .exchangeToFlux(this::chunks)
+                .onErrorMap(this::mapTransport);
+    }
+
+    @Override
+    public Mono<EmbeddingResponse> embed(EmbeddingRequest request) {
+        ensureConfigured();
+        return webClient.post()
+                .uri(settings.embeddingsPath())
+                .header(HttpHeaders.AUTHORIZATION, bearer())
+                .accept(MediaType.APPLICATION_JSON)
+                .bodyValue(request)
+                .exchangeToMono(response -> read(response, EmbeddingResponse.class))
                 .onErrorMap(this::mapTransport);
     }
 

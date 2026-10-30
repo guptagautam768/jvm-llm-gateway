@@ -63,6 +63,30 @@ public record ChatCompletionRequest(
                 topLogprobs);
     }
 
+    public ChatCompletionRequest withMessages(List<ChatMessage> messages) {
+        return new ChatCompletionRequest(
+                model,
+                messages,
+                temperature,
+                topP,
+                n,
+                stream,
+                streamOptions,
+                stop,
+                maxTokens,
+                maxCompletionTokens,
+                presencePenalty,
+                frequencyPenalty,
+                user,
+                responseFormat,
+                seed,
+                tools,
+                toolChoice,
+                parallelToolCalls,
+                logprobs,
+                topLogprobs);
+    }
+
     public ChatCompletionRequest withStream(Boolean stream) {
         return new ChatCompletionRequest(
                 model,

@@ -25,7 +25,8 @@ public final class ModelRouter {
         }
         for (RouteDefinition route : policy.routes()) {
             if (route.alias().equals(model)) {
-                return new ResolvedRoute(model, route.targets(), route.timeout(), route.retry(), true);
+                return new ResolvedRoute(
+                        model, route.targets(), route.timeout(), route.retry(), true, route.cacheSettings());
             }
         }
         List<RouteTarget> matches = new ArrayList<>();
@@ -42,12 +43,14 @@ public final class ModelRouter {
             }
         }
         if (matches.size() == 1) {
+            RouteTarget match = matches.get(0);
             return new ResolvedRoute(
                     model,
-                    List.of(matches.get(0)),
+                    List.of(match),
                     policy.defaultTimeout(),
                     policy.defaultRetry(),
-                    false);
+                    false,
+                    cacheSettingsForPrimary(match));
         }
         if (matches.size() > 1) {
             throw new InvalidRequestException(
@@ -72,5 +75,22 @@ public final class ModelRouter {
             }
         }
         return new ModelListResponse("list", List.copyOf(cards.values()));
+    }
+
+    /**
+     * A concrete model name is not an alias, so it inherits the cache settings of the
+     * alias whose primary target is that model. Later aliases do not override the first.
+     */
+    private RouteCacheSettings cacheSettingsForPrimary(RouteTarget match) {
+        for (RouteDefinition route : policy.routes()) {
+            if (route.targets().isEmpty()) {
+                continue;
+            }
+            RouteTarget primary = route.targets().get(0);
+            if (primary.provider().equals(match.provider()) && primary.model().equals(match.model())) {
+                return route.cacheSettings();
+            }
+        }
+        return RouteCacheSettings.inherit();
     }
 }

@@ -2,6 +2,7 @@ package dev.gautamgupta.gateway.config;
 
 import dev.gautamgupta.gateway.core.routing.CircuitBreakerSettings;
 import dev.gautamgupta.gateway.core.routing.RetrySettings;
+import dev.gautamgupta.gateway.core.routing.RouteCacheSettings;
 import dev.gautamgupta.gateway.core.routing.RouteDefinition;
 import dev.gautamgupta.gateway.core.routing.RouteTarget;
 import dev.gautamgupta.gateway.core.routing.RoutingPolicy;
@@ -53,7 +54,8 @@ public class GatewayRoutingProperties {
             for (Target target : route.getTargets()) {
                 targets.add(new RouteTarget(target.getProvider(), target.getModel()));
             }
-            definitions.add(new RouteDefinition(entry.getKey(), targets, timeout, retry));
+            definitions.add(new RouteDefinition(
+                    entry.getKey(), targets, timeout, retry, route.getCache().toSettings()));
         }
         return new RoutingPolicy(
                 definitions,
@@ -67,6 +69,8 @@ public class GatewayRoutingProperties {
         private List<Target> targets = new ArrayList<>();
         private Duration timeout;
         private Retry retry;
+        @NestedConfigurationProperty
+        private RouteCache cache = new RouteCache();
 
         public List<Target> getTargets() {
             return targets;
@@ -90,6 +94,43 @@ public class GatewayRoutingProperties {
 
         public void setRetry(Retry retry) {
             this.retry = retry;
+        }
+
+        public RouteCache getCache() {
+            if (cache == null) {
+                cache = new RouteCache();
+            }
+            return cache;
+        }
+
+        public void setCache(RouteCache cache) {
+            this.cache = cache == null ? new RouteCache() : cache;
+        }
+    }
+
+    /** Optional per-alias cache overrides. Null fields inherit {@code gateway.cache}. */
+    public static class RouteCache {
+        private Boolean semantic;
+        private Double threshold;
+
+        public Boolean getSemantic() {
+            return semantic;
+        }
+
+        public void setSemantic(Boolean semantic) {
+            this.semantic = semantic;
+        }
+
+        public Double getThreshold() {
+            return threshold;
+        }
+
+        public void setThreshold(Double threshold) {
+            this.threshold = threshold;
+        }
+
+        public RouteCacheSettings toSettings() {
+            return new RouteCacheSettings(semantic, threshold);
         }
     }
 

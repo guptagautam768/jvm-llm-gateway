@@ -11,9 +11,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.TextNode;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import dev.gautamgupta.gateway.api.chat.ChatCompletionRequest;
+import dev.gautamgupta.gateway.api.embed.EmbeddingRequest;
 import dev.gautamgupta.gateway.api.json.GatewayJson;
 import dev.gautamgupta.gateway.core.provider.ProviderException;
 import dev.gautamgupta.gateway.core.provider.ProviderIds;
@@ -127,6 +129,31 @@ class OpenAiProviderClientTest {
     }
 
     @Test
+    void embedsWithTheSameKeyAndOptionalDimensions() {
+        WIRE_MOCK.stubFor(post(urlEqualTo("/v1/embeddings"))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("""
+                                {"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2]}],"model":"text-embedding-3-small","usage":{"prompt_tokens":1,"total_tokens":1}}
+                                """)));
+
+        StepVerifier.create(client.embed(new EmbeddingRequest(
+                        "text-embedding-3-small", TextNode.valueOf("Hello"), 4)))
+                .assertNext(response -> {
+                    assertThat(response.model()).isEqualTo("text-embedding-3-small");
+                    assertThat(response.data().get(0).get("embedding").get(0).asDouble()).isEqualTo(0.1d);
+                })
+                .verifyComplete();
+
+        String body = WIRE_MOCK.getAllServeEvents().get(0).getRequest().getBodyAsString();
+        assertThat(WIRE_MOCK.getAllServeEvents().get(0).getRequest().getHeader("Authorization")).isEqualTo("Bearer sk-test");
+        assertThat(body).contains("\"model\":\"text-embedding-3-small\"");
+        assertThat(body).contains("\"input\":\"Hello\"");
+        assertThat(body).contains("\"dimensions\":4");
+    }
+
+    @Test
     void listsModelsWithTheSameKey() {
         WIRE_MOCK.stubFor(get(urlEqualTo("/v1/models"))
                 .willReturn(aResponse()
@@ -180,7 +207,7 @@ class OpenAiProviderClientTest {
         assertThat(WIRE_MOCK.getAllServeEvents()).isEmpty();
         assertThat(unconfigured.id()).isEqualTo(ProviderIds.OPENAI);
         assertThat(unconfigured.capabilities().chat()).isTrue();
-        assertThat(unconfigured.capabilities().embeddings()).isFalse();
+        assertThat(unconfigured.capabilities().embeddings()).isTrue();
     }
 
     @Test

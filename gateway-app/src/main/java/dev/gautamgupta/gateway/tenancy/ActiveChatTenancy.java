@@ -35,6 +35,10 @@ import reactor.core.publisher.Mono;
  * Token and dollar budgets, plus the async ledger row. The pre-flight check does not
  * increment Redis. Reconcile adds provider usage when the response includes it, and the
  * pre-flight estimate when it does not (streaming responses that omit usage).
+ *
+ * <p>A cache hit still had to pass this pre-flight check. Reconcile does not add the
+ * served tokens to the Redis budget: that counter is provider spend. The ledger row
+ * still records the served tokens, the price-table cost, and {@code cache=exact|semantic}.
  */
 public final class ActiveChatTenancy implements ChatTenancy {
 
@@ -96,6 +100,9 @@ public final class ActiveChatTenancy implements ChatTenancy {
 
     @Override
     public Mono<Void> reconcile(ServerWebExchange exchange, String servedModel, Usage usage) {
+        if (Boolean.TRUE.equals(exchange.getAttribute(TenancyExchange.CACHE_HIT))) {
+            return Mono.empty();
+        }
         ApiKeyRecord principal = principal(exchange);
         if (principal == null) {
             return Mono.empty();
@@ -156,7 +163,7 @@ public final class ActiveChatTenancy implements ChatTenancy {
                 }
             } else {
                 cost = micros.get();
-                if (status >= 200 && status < 300) {
+                if (status >= 200 && status < 300 && providerSpend(cacheFlag(exchange))) {
                     metrics.recordEstimatedCost(priced, cost, principal.tenantId());
                 }
             }
@@ -179,7 +186,7 @@ public final class ActiveChatTenancy implements ChatTenancy {
                 prompt,
                 completion,
                 cost,
-                "none",
+                cacheFlag(exchange),
                 latency,
                 status,
                 errorCode));
@@ -281,6 +288,19 @@ public final class ActiveChatTenancy implements ChatTenancy {
             return model;
         }
         return null;
+    }
+
+    private static String cacheFlag(ServerWebExchange exchange) {
+        Object value = exchange.getAttribute(TenancyExchange.CACHE);
+        if (value instanceof String text && ("exact".equals(text) || "semantic".equals(text))) {
+            return text;
+        }
+        return "none";
+    }
+
+    /** Redis budgets and {@code gateway.cost.estimated} track provider spend, not cache hits. */
+    private static boolean providerSpend(String cache) {
+        return "none".equals(cache);
     }
 
     private static ApiKeyRecord principal(ServerWebExchange exchange) {

@@ -8,8 +8,13 @@ public record RouteDefinition(
         String alias,
         List<RouteTarget> targets,
         Duration timeout,
-        RetrySettings retry
+        RetrySettings retry,
+        RouteCacheSettings cacheSettings
 ) {
+
+    public RouteDefinition(String alias, List<RouteTarget> targets, Duration timeout, RetrySettings retry) {
+        this(alias, targets, timeout, retry, RouteCacheSettings.inherit());
+    }
 
     public RouteDefinition {
         alias = alias == null ? "" : alias.trim();
@@ -19,6 +24,9 @@ public record RouteDefinition(
         }
         if (retry == null) {
             throw new IllegalArgumentException("route retry settings are required");
+        }
+        if (cacheSettings == null) {
+            cacheSettings = RouteCacheSettings.inherit();
         }
     }
 }

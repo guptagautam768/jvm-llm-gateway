@@ -20,8 +20,9 @@ services:
       timeout: 3s
       retries: 20
 
-  # Redis Stack is the token bucket and budget store now, and RediSearch later (ADR-0006).
+  # Redis Stack is the token bucket, the budget counters, and the exact/semantic cache (ADR-0006).
   # Its modules are not Apache-2.0. Payloads are ephemeral: no volume, persistence off.
+  # allkeys-lru can evict rate-limit keys; the gateway also caps cache entries itself.
   redis:
     image: redis/redis-stack-server:7.4.0-v8
     ports:

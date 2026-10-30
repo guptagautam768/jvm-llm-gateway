@@ -17,6 +17,8 @@ final class OfflineDataStores {
             + "org.springframework.boot.autoconfigure.data.redis.RedisReactiveAutoConfiguration,"
             + "org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration";
 
+    static final String CACHE_OFF = "gateway.cache.enabled=false";
+
     private OfflineDataStores() {
     }
 }
