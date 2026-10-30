@@ -22,7 +22,7 @@ public class ModelsController {
     public Mono<ModelListResponse> list() {
         long start = System.nanoTime();
         return service.listModels()
-                .doOnNext(ignored -> metrics.recordSuccess("models", "gateway", "catalog", null, start))
-                .doOnError(error -> metrics.recordError("models", "gateway", "catalog", error, start));
+                .doOnNext(ignored -> metrics.recordSuccess("models", "gateway", "catalog", null, start, null))
+                .doOnError(error -> metrics.recordError("models", "gateway", "catalog", error, start, null));
     }
 }

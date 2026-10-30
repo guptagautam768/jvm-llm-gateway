@@ -4,11 +4,11 @@
 [![Java](https://img.shields.io/badge/Java-21-orange.svg)](https://openjdk.org/projects/jdk/21/)
 [![CI](https://github.com/guptagautam768/jvm-llm-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/guptagautam768/jvm-llm-gateway/actions/workflows/ci.yml)
 
-OpenAI-compatible LLM gateway for the JVM. Application teams point an OpenAI SDK at one base URL. The gateway owns provider access, routing, and resilience. Tenancy, caching, guardrails, and a usage ledger come later.
+OpenAI-compatible LLM gateway for the JVM. Application teams point an OpenAI SDK at one base URL. The gateway owns provider access, routing, resilience, caller tenancy, and a usage ledger. Caching and guardrails come later.
 
 This is a portfolio project for Gautam Gupta. It is platform infrastructure, not a RAG or agent product.
 
-Requirements: [SDR-0001](docs/sdr/0001-jvm-llm-gateway-sdr.md) (APPROVED v1.0). Decisions: [ADR index](docs/adr/README.md) (ADR-0001 through ADR-0012 Accepted; ADR-0013 Proposed for the Anthropic adapter).
+Requirements: [SDR-0001](docs/sdr/0001-jvm-llm-gateway-sdr.md) (APPROVED v1.0). Decisions: [ADR index](docs/adr/README.md) (ADR-0001 through ADR-0013 Accepted).
 
 ## Week 1 status
 
@@ -36,14 +36,31 @@ Shipped:
 - YAML aliases under `gateway.routes`. A client `model` of `fast` or `smart` walks that alias's ordered targets. A concrete model name that appears on exactly one provider calls that provider only, with `gateway.resilience` as the timeout and retry, and does not borrow another alias's fallback chain.
 - Resilience4j per target, outermost first: time limiter, circuit breaker, retry (ADR-0005). One breaker per `(provider, model)`. 4xx other than 429 is returned as-is and is not retried or fallen back. 429, 5xx, 529, connection failure, and timeout fall through the chain. After the chain is exhausted, 5xx and connection failures are **502** `upstream_unavailable`, timeouts are **504** `provider_timeout`, and an open breaker with nowhere left to go is **502** `circuit_open`. A provider 429 that survives the chain stays **429**.
 - Streaming may fall back only before the first chunk. After that, a failure ends the stream with an error event and no `data: [DONE]`.
-- Anthropic chat, including SSE, behind the same `ProviderClient` port. The edge stays OpenAI-shaped. The API key is `ANTHROPIC_API_KEY`. See [ADR-0013](docs/adr/0013-anthropic-adapter-direct-webclient.md) (Proposed) for why this adapter is WebClient rather than Spring AI.
+- Anthropic chat, including SSE, behind the same `ProviderClient` port. The edge stays OpenAI-shaped. The API key is `ANTHROPIC_API_KEY`. See [ADR-0013](docs/adr/0013-anthropic-adapter-direct-webclient.md) for why this adapter is WebClient rather than Spring AI.
 - `GET /v1/models` lists configured aliases, then the concrete models on those routes. It does not call a provider.
 
-Still later: Ollama (FR-012), `POST /v1/embeddings` (FR-002), caller API keys, Redis cache, budgets, PII redaction, and the Postgres ledger.
+Caller API keys, budgets, and the usage ledger shipped in week 3. Still later: Ollama (FR-012), `POST /v1/embeddings` (FR-002), Redis cache, and PII redaction.
 
 The route timeout is the deadline for one target, including its retries. The next target gets its own deadline. Worst case for an alias is about `targets × timeout` when every target hangs. `fast` in the shipped file is two targets and 30s, so a fully hung route is about 60s before **504**. A 4xx fails immediately.
 
 Resilience4j records one circuit-breaker result for the whole retry sequence (the breaker wraps the retry, as ADR-0005's decorator order says). A retry is not a second increment of the failure count.
+
+## Week 3 status
+
+Milestone: **tenancy, limits, and the usage ledger**.
+
+Shipped:
+
+- `POST /v1/chat/completions` requires a caller key. `Authorization: Bearer lgw_<keyId>_<secret>` is the primary form. The `api-key` header is accepted when `Authorization` is absent. `GET /v1/models` stays open.
+- Keys are `key_id` plus SHA-256 of a secret that decodes to at least 32 bytes. Postgres stores the hash. Comparison uses `MessageDigest.isEqual`. A Caffeine cache (default 30s, `gateway.tenancy.cache-ttl`) keeps Postgres off the hot path, so a revocation shows up after that TTL.
+- Bootstrap tenants and keys from `gateway.tenancy.bootstrap` / `GATEWAY_BOOTSTRAP_KEY_ID` and `GATEWAY_BOOTSTRAP_KEY_SECRET`. The process hashes the secret before insert. Real secrets stay in the environment. See `.env.example`.
+- Redis Lua token bucket `rl:{tenant}` with `Retry-After` and `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`. An optional tokens-per-minute bucket is `rl:{tenant}:tpm` when `tokens-per-minute` is set.
+- Token and cost budgets in Redis at `budget:{tenant}:{windowStart}`. Pre-flight estimates prompt characters (about 4 per token) plus `max_tokens` / `max_completion_tokens` (or `gateway.tenancy.default-completion-tokens`). After the provider returns, the counter is replaced by actual usage. A stream that omits usage is charged the estimate. Concurrent requests can overshoot by a little; that is the ADR-0007 trade-off.
+- Errors: **401** `invalid_api_key`, **403** `tenant_disabled`, **429** `rate_limit_exceeded` | `token_budget_exceeded` | `cost_budget_exceeded`. Redis or Postgres failures on this path are **503** `dependency_unavailable` (fail-closed, the policy ADR-0007 proposed).
+- `usage_ledger` is range-partitioned by day. Writes are async. A failed write is logged and counted on `gateway.ledger.writes` and is not returned to the client. Rows have no prompt or completion text. `cache` is `none` until week 4.
+- Estimated cost comes from `gateway.prices` (USD per 1K tokens). A missing model stores `est_cost_micros` null and increments `gateway.price.missing`.
+- ShedLock (R2DBC, so JDBC stays on Flyway) runs `gateway.ledger.retention` (default 30 days): drop older daily partitions and pre-create upcoming ones.
+- Metrics: `gateway.ratelimit.rejections` (`reason`), `gateway.tokens`, `gateway.cost.estimated`, `gateway.price.missing`. The `tenant` tag is off unless `gateway.tenancy.metrics-tenant-tag=true`.
 
 ## Architecture
 
@@ -68,13 +85,13 @@ flowchart LR
   route --> anthropic
   openai -->|HTTPS| openaiApi
   anthropic -->|HTTPS| anthropicApi
+  app --> redis
+  app --> postgres
   app -.-> actuator
-  redis -.-> app
-  postgres -.-> app
   ollama -.-> app
 ```
 
-Solid arrows are the chat path. Dashed arrows are present in Compose or on the management port and are not on the chat path yet. Ollama is in Compose only.
+Solid arrows are the chat path: auth and limits hit Redis, tenant lookup and the ledger hit Postgres. Ollama is in Compose only. The management port is separate from the API.
 
 Module layout (ADR-0002):
 
@@ -85,14 +102,14 @@ Module layout (ADR-0002):
 | `gateway-core` | `ProviderClient` port, registry, alias router, Resilience4j guard. No web types |
 | `gateway-providers` | OpenAI and Anthropic adapters |
 | `gateway-cache` | Placeholder for ADR-0006 |
-| `gateway-tenancy` | Placeholder for ADR-0007 |
-| `gateway-persistence` | Placeholder for ADR-0008 |
+| `gateway-tenancy` | API key hash and parse, Redis token bucket, budget counters, price math |
+| `gateway-persistence` | Flyway schema, R2DBC tenant lookup, async ledger, partition retention |
 | `gateway-guardrails` | Placeholder for ADR-0009 |
 | `build-logic` | Java 21 convention plugins and JaCoCo |
 
 ## Quickstart
 
-Requirements: Java 21, and Docker with Compose if you want the dependency stack or the container image. Tests do not need an API key or Docker.
+Requirements: Java 21. Docker is required for Compose and for the Testcontainers tests. The WireMock unit tests do not need a provider key.
 
 ```bash
 git clone https://github.com/guptagautam768/jvm-llm-gateway.git
@@ -102,7 +119,13 @@ export ANTHROPIC_API_KEY=sk-ant-...   # optional; needed for Anthropic targets
 docker compose up --build
 ```
 
-Compose publishes the API on port 8080 and the management port on `127.0.0.1:8081` only. Postgres, Redis Stack, and Ollama start beside the app. Chat does not use them yet.
+Compose publishes the API on port 8080 and the management port on `127.0.0.1:8081` only. Postgres 16 and Redis Stack start first; the gateway migrates the schema and bootstraps the tenant key from the environment. Generate a caller key and put it in `.env` (never commit it):
+
+```bash
+python -c "import os,base64; print('GATEWAY_BOOTSTRAP_KEY_ID='+os.urandom(4).hex()); print('GATEWAY_BOOTSTRAP_KEY_SECRET='+base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip('='))"
+```
+
+The value you send is `lgw_<key id>_<secret>`. Leave the secret empty and every chat call is **401**.
 
 The shipped aliases are illustrative (ADR-0005). `fast` tries OpenAI `gpt-4o-mini`, then Anthropic `claude-haiku-4-5`. `smart` tries OpenAI `gpt-4o`, then Anthropic `claude-sonnet-4-5`. Edit `gateway.routes` in `gateway-app/src/main/resources/application.yml` and restart. A target whose provider has no API key is skipped. If every target is missing a key, the client gets **503** `provider_not_configured`.
 
@@ -123,6 +146,7 @@ Alias chat:
 
 ```bash
 curl -s http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer lgw_${GATEWAY_BOOTSTRAP_KEY_ID}_${GATEWAY_BOOTSTRAP_KEY_SECRET}" \
   -H 'Content-Type: application/json' \
   -d '{"model":"fast","messages":[{"role":"user","content":"Say hello in one sentence."}]}'
 ```
@@ -133,6 +157,7 @@ A concrete name still works when it is configured on one provider:
 
 ```bash
 curl -s http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer lgw_${GATEWAY_BOOTSTRAP_KEY_ID}_${GATEWAY_BOOTSTRAP_KEY_SECRET}" \
   -H 'Content-Type: application/json' \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Say hello in one sentence."}]}'
 ```
@@ -141,6 +166,7 @@ Streaming chat:
 
 ```bash
 curl -N http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer lgw_${GATEWAY_BOOTSTRAP_KEY_ID}_${GATEWAY_BOOTSTRAP_KEY_SECRET}" \
   -H 'Content-Type: application/json' \
   -H 'Accept: text/event-stream' \
   -d '{"model":"gpt-4o-mini","stream":true,"messages":[{"role":"user","content":"Count to three."}]}'
@@ -159,12 +185,28 @@ Run the gateway on the host instead of in a container:
 ```bash
 export OPENAI_API_KEY=sk-...
 export ANTHROPIC_API_KEY=sk-ant-...   # optional
+export SPRING_R2DBC_URL=r2dbc:postgresql://localhost:5432/gateway
+export SPRING_R2DBC_USERNAME=gateway
+export SPRING_R2DBC_PASSWORD=gateway
+export SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/gateway
+export SPRING_DATASOURCE_USERNAME=gateway
+export SPRING_DATASOURCE_PASSWORD=gateway
+export SPRING_FLYWAY_URL=jdbc:postgresql://localhost:5432/gateway
+export SPRING_FLYWAY_USER=gateway
+export SPRING_FLYWAY_PASSWORD=gateway
+export SPRING_DATA_REDIS_HOST=localhost
+export GATEWAY_BOOTSTRAP_KEY_ID=...
+export GATEWAY_BOOTSTRAP_KEY_SECRET=...
 ./gradlew :gateway-app:bootRun
 ```
 
+Postgres and Redis must already be up (`docker compose up postgres redis`). Flyway uses JDBC. The request path uses R2DBC and Lettuce.
+
 `OPENAI_BASE_URL` overrides the OpenAI origin (default `https://api.openai.com`). Paths are `/v1/chat/completions` and, for the adapter only, `/v1/models`. The base URL should not already include `/v1`. `ANTHROPIC_BASE_URL` overrides the Anthropic origin (default `https://api.anthropic.com`); the adapter posts to `/v1/messages`.
 
-`GET /v1/models` is served from the routing table, so it works without a provider key. An unknown `model` is **400** `invalid_request`. A missing `model` or `messages` field is the same. A 4xx from a provider, other than 429, is returned with that status and the provider error body (Anthropic errors are rewritten into the OpenAI error shape). 429 is retried and then falls back. After the chain is exhausted, provider 5xx and connection failures are **502**, and timeouts are **504**. A missing key for the only target is **503**.
+`GET /v1/models` is served from the routing table, so it works without a caller key or a provider key. Chat without a valid caller key is **401** `invalid_api_key`. A valid key for a disabled tenant is **403** `tenant_disabled`. Over the request bucket or the token or dollar budget is **429** with `rate_limit_exceeded`, `token_budget_exceeded`, or `cost_budget_exceeded`, plus `Retry-After` and the `X-RateLimit-*` headers. Redis or Postgres being down on that path is **503** `dependency_unavailable`.
+
+An unknown `model` is **400** `invalid_request`. A missing `model` or `messages` field is the same. A 4xx from a provider, other than 429, is returned with that status and the provider error body (Anthropic errors are rewritten into the OpenAI error shape). Provider 429 is retried and then falls back. After the chain is exhausted, provider 5xx and connection failures are **502**, and timeouts are **504**. A missing key for the only target is **503** `provider_not_configured`.
 
 Anthropic requires `max_tokens`. If the client sends neither `max_tokens` nor `max_completion_tokens`, the gateway sends `gateway.providers.anthropic.default-max-tokens` (4096). Text content is translated. `n` greater than 1, and non-text content parts, are **400**. Tools, penalties, and `response_format` are not forwarded to Anthropic.
 
@@ -176,7 +218,7 @@ Logs are JSON in Elastic Common Schema and do not include prompt text. Shutdown 
 ./gradlew build
 ```
 
-WireMock stands in for OpenAI and Anthropic. `./gradlew build` also writes per-module JaCoCo reports and an aggregate at `build/reports/jacoco/jacocoRootReport/`. There is no coverage gate yet; ADR-0011 sets that after a baseline.
+WireMock stands in for OpenAI and Anthropic. `TenancyLedgerIT` uses Testcontainers (`postgres:16` and `redis/redis-stack-server`, the same image as Compose) for AC-009 and AC-012: unknown keys, a disabled tenant, the rate-limit and budget 429s, ledger rows, budget reconcile, streaming usage, a missing price, and the retention job. `./gradlew build` also writes per-module JaCoCo reports and an aggregate at `build/reports/jacoco/jacocoRootReport/`. There is no coverage gate yet; ADR-0011 sets that after a baseline.
 
 ## Wire format
 
@@ -189,10 +231,10 @@ Unknown JSON fields are ignored and are not forwarded (FR-001, the "ignore" opti
 | Week | Milestone | What it adds |
 |---|---|---|
 | 2 | Routing and resilience | **Done:** YAML aliases, ordered fallback, Resilience4j retry / circuit breaker / time limiter (ADR-0005), Anthropic chat and SSE. **Still open:** Ollama (FR-012) and `POST /v1/embeddings` (FR-002). |
-| 3 | Tenancy and limits | Hashed API keys, Postgres tenants, Redis token bucket, token and dollar budgets, 429 contract (ADR-0007). Usage ledger schema and 30-day retention (ADR-0008). |
+| 3 | Tenancy and limits | **Done:** hashed API keys, Postgres tenants, Redis token bucket, token and dollar budgets, 429 contract (ADR-0007). Daily usage ledger and 30-day partition retention (ADR-0008). |
 | 4 | Semantic cache | Redis exact-match and vector cache, TTL plus a size bound, `X-Cache-Bypass` (ADR-0006). |
 | 5 | Guardrails and observability | PII redact-and-forward (ADR-0009), request size limits, the remaining Micrometer series, OpenTelemetry traces, Grafana dashboard (ADR-0010). |
-| 6 | Polish | OpenAI Java SDK contract test, Testcontainers for Redis and Postgres, JaCoCo baseline gate, load-test notes, demo script. |
+| 6 | Polish | OpenAI Java SDK contract test, JaCoCo baseline gate, load-test notes, demo script. Testcontainers for limits and the ledger already run in week 3. |
 
 ## License
 

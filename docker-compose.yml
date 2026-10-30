@@ -1,6 +1,6 @@
 # Local dependencies for jvm-llm-gateway.
-# Redis, Postgres, and Ollama are started so later milestones can use them.
-# Chat is routed from YAML aliases. Postgres, Redis, and Ollama are not on that path yet.
+# Chat auth, rate limits, budgets, and the usage ledger use Postgres and Redis.
+# Ollama is present for a later provider and is not on the chat path.
 name: jvm-llm-gateway
 
 services:
@@ -20,7 +20,7 @@ services:
       timeout: 3s
       retries: 20
 
-  # Redis Stack is required later for RediSearch vectors (ADR-0006).
+  # Redis Stack is the token bucket and budget store now, and RediSearch later (ADR-0006).
   # Its modules are not Apache-2.0. Payloads are ephemeral: no volume, persistence off.
   redis:
     image: redis/redis-stack-server:7.4.0-v8
@@ -52,10 +52,33 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
+      SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/gateway
+      SPRING_R2DBC_USERNAME: gateway
+      SPRING_R2DBC_PASSWORD: gateway
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/gateway
+      SPRING_DATASOURCE_USERNAME: gateway
+      SPRING_DATASOURCE_PASSWORD: gateway
+      SPRING_FLYWAY_URL: jdbc:postgresql://postgres:5432/gateway
+      SPRING_FLYWAY_USER: gateway
+      SPRING_FLYWAY_PASSWORD: gateway
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: "6379"
+      GATEWAY_BOOTSTRAP_TENANT_ID: ${GATEWAY_BOOTSTRAP_TENANT_ID:-local}
+      GATEWAY_BOOTSTRAP_KEY_ID: ${GATEWAY_BOOTSTRAP_KEY_ID:-}
+      GATEWAY_BOOTSTRAP_KEY_SECRET: ${GATEWAY_BOOTSTRAP_KEY_SECRET:-}
+      GATEWAY_RATE_CAPACITY: ${GATEWAY_RATE_CAPACITY:-60}
+      GATEWAY_RATE_REFILL_PER_SECOND: ${GATEWAY_RATE_REFILL_PER_SECOND:-1}
+      GATEWAY_TOKEN_BUDGET: ${GATEWAY_TOKEN_BUDGET:-}
+      GATEWAY_COST_BUDGET_MICROS: ${GATEWAY_COST_BUDGET_MICROS:-}
+      GATEWAY_TOKENS_PER_MINUTE: ${GATEWAY_TOKENS_PER_MINUTE:-}
+      GATEWAY_BUDGET_WINDOW: ${GATEWAY_BUDGET_WINDOW:-30d}
     depends_on:
-      - postgres
-      - redis
-      - ollama
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_started
 
 volumes:
   postgres-data:
