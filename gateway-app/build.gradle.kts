@@ -25,6 +25,8 @@ dependencies {
     implementation(libs.r2dbc.postgresql)
     implementation(libs.shedlock.spring)
     implementation(libs.shedlock.provider.r2dbc)
+    implementation(libs.micrometer.tracing.bridge.otel)
+    implementation(libs.opentelemetry.exporter.otlp)
 
     testImplementation(libs.spring.boot.starter.test)
     testImplementation(libs.wiremock)

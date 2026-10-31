@@ -50,6 +50,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.scheduling.annotation.EnableScheduling;
+import io.micrometer.observation.ObservationRegistry;
 
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties({
@@ -164,9 +165,10 @@ public class TenancyConfiguration {
                 RequestLimiter limiter,
                 UsageLedger ledger,
                 GatewayMetrics metrics,
-                ObjectMapper objectMapper
+                ObjectMapper objectMapper,
+                ObservationRegistry observations
         ) {
-            return new ChatTenancyWebFilter(authenticator, limiter, ledger, metrics, objectMapper);
+            return new ChatTenancyWebFilter(authenticator, limiter, ledger, metrics, objectMapper, observations);
         }
 
         @Bean

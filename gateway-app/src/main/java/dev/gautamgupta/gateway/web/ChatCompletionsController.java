@@ -63,10 +63,9 @@ public class ChatCompletionsController {
     public Object create(@RequestBody ChatCompletionRequest request, ServerWebExchange exchange) {
         service.validate(request);
         boolean stream = Boolean.TRUE.equals(request.stream());
-        log.info("chat completions model={} stream={}", request.model(), stream);
         // Auth and the request bucket already ran. Pre-flight budget is next, then
-        // size limit → redaction → cache → provider (ADR-0009). Size limit and
-        // redaction are no-ops until week 5. stream=true does not read or write the cache.
+        // size limit → redaction → cache → provider (ADR-0009). stream=true does not
+        // read or write the cache. Redaction still runs on the prompt.
         ServerHttpResponse response = exchange.getResponse();
         if (stream) {
             response.getHeaders().setContentType(MediaType.TEXT_EVENT_STREAM);
@@ -74,12 +73,18 @@ public class ChatCompletionsController {
             response.getHeaders().add("X-Accel-Buffering", "no");
             return tenancy.preflight(exchange, request)
                     .then(Mono.fromRunnable(() -> applyRateHeaders(exchange)))
-                    .thenMany(Flux.defer(() -> cachedStream(request, exchange)));
+                    .thenMany(Flux.deferContextual(context -> {
+                        RequestCorrelation.logChat(log, context, request.model(), true);
+                        return cachedStream(request, exchange);
+                    }));
         }
         response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
         return tenancy.preflight(exchange, request)
                 .then(Mono.fromRunnable(() -> applyRateHeaders(exchange)))
-                .then(Mono.defer(() -> cachedComplete(request, exchange)));
+                .then(Mono.deferContextual(context -> {
+                    RequestCorrelation.logChat(log, context, request.model(), false);
+                    return cachedComplete(request, exchange);
+                }));
     }
 
     private Flux<ServerSentEvent<String>> cachedStream(ChatCompletionRequest request, ServerWebExchange exchange) {
@@ -120,6 +125,7 @@ public class ChatCompletionsController {
                                     .then(tenancy.reconcile(exchange, trace.model(), body.usage()))
                                     .thenReturn(body))
                             .doOnNext(body -> {
+                                recordAttempts(trace);
                                 metrics.recordSuccess(
                                         ROUTE, trace.providerId(), trace.model(), body.usage(), start, tenancy.tenantId(exchange));
                                 tenancy.record(
@@ -158,6 +164,7 @@ public class ChatCompletionsController {
                 }))
                 .doOnComplete(() -> {
                     if (!failed.get()) {
+                        recordAttempts(trace);
                         metrics.recordSuccess(
                                 ROUTE, trace.providerId(), trace.model(), usage.get(), start, tenancy.tenantId(exchange));
                         tenancy.record(exchange, ROUTE, trace.providerId(), trace.model(), usage.get(), 200, null, start);
@@ -166,10 +173,20 @@ public class ChatCompletionsController {
     }
 
     private Mono<Void> finishError(ServerWebExchange exchange, AttemptTrace trace, Throwable error, long start) {
+        recordAttempts(trace);
         metrics.recordError(ROUTE, trace.providerId(), trace.model(), error, start, tenancy.tenantId(exchange));
         Outcome outcome = outcome(error);
         tenancy.record(exchange, ROUTE, trace.providerId(), trace.model(), null, outcome.status(), outcome.code(), start);
         return tenancy.reconcile(exchange, trace.model(), null);
+    }
+
+    private void recordAttempts(AttemptTrace trace) {
+        for (AttemptTrace.ProviderError error : trace.errors()) {
+            metrics.recordProviderError(error.provider(), error.kind());
+        }
+        for (AttemptTrace.Fallback fallback : trace.fallbacks()) {
+            metrics.recordFallback(fallback.fromProvider(), fallback.toProvider());
+        }
     }
 
     private void recordLookups(CacheDecision decision) {

@@ -6,6 +6,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.gautamgupta.gateway.api.error.ApiErrorResponse;
 import dev.gautamgupta.gateway.core.provider.InvalidRequestException;
 import dev.gautamgupta.gateway.core.provider.ProviderException;
+import dev.gautamgupta.gateway.guardrails.pii.PiiDetectedException;
+import dev.gautamgupta.gateway.guardrails.pii.RedactionCounts;
+import dev.gautamgupta.gateway.guardrails.pii.RequestTooLargeException;
 import dev.gautamgupta.gateway.tenancy.RateLimitHeaders;
 import dev.gautamgupta.gateway.tenancy.error.TenancyException;
 import java.util.Locale;
@@ -50,6 +53,30 @@ public class ApiExceptionHandler {
             builder.header(RateLimitHeaders.RESET, Long.toString(ex.rateLimit().resetEpochSeconds()));
         }
         return builder.body(ApiErrorResponse.of(ex.getMessage(), ex.type(), ex.code(), null));
+    }
+
+    @ExceptionHandler(PiiDetectedException.class)
+    public ResponseEntity<ApiErrorResponse> pii(PiiDetectedException ex) {
+        log.warn("rejected request code=pii_detected {}", RedactionCounts.format(ex.counts()));
+        return ResponseEntity.badRequest()
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(ApiErrorResponse.of(
+                        "The request was rejected because it contains personal data.",
+                        "invalid_request_error",
+                        ex.code(),
+                        null));
+    }
+
+    @ExceptionHandler(RequestTooLargeException.class)
+    public ResponseEntity<ApiErrorResponse> tooLarge(RequestTooLargeException ex) {
+        log.warn("rejected request code=request_too_large bytes={} limit={}", ex.bytes(), ex.limit());
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(ApiErrorResponse.of(
+                        "The request exceeds the maximum message size.",
+                        "invalid_request_error",
+                        ex.code(),
+                        null));
     }
 
     @ExceptionHandler(InvalidRequestException.class)
