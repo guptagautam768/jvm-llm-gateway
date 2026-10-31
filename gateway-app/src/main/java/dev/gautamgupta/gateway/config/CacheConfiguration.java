@@ -10,7 +10,9 @@ import dev.gautamgupta.gateway.core.routing.ModelRouter;
 import dev.gautamgupta.gateway.guardrails.PromptRedactor;
 import dev.gautamgupta.gateway.guardrails.RequestSizeLimit;
 import dev.gautamgupta.gateway.providers.openai.OpenAiProviderClient;
+import dev.gautamgupta.gateway.metrics.GatewayMetrics;
 import dev.gautamgupta.gateway.web.ChatCacheService;
+import io.micrometer.observation.ObservationRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import org.slf4j.Logger;
@@ -40,9 +42,11 @@ public class CacheConfiguration {
             ModelRouter router,
             ResponseCache cache,
             PromptRedactor redactor,
-            RequestSizeLimit sizeLimit
+            RequestSizeLimit sizeLimit,
+            GatewayMetrics metrics,
+            ObservationRegistry observations
     ) {
-        return new ChatCacheService(properties, router, cache, redactor, sizeLimit);
+        return new ChatCacheService(properties, router, cache, redactor, sizeLimit, metrics, observations);
     }
 
     @Configuration(proxyBeanMethods = false)

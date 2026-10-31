@@ -10,6 +10,7 @@ dependencies {
     implementation(libs.resilience4j.retry)
     implementation(libs.resilience4j.timelimiter)
     implementation(libs.resilience4j.reactor)
+    implementation(libs.micrometer.observation)
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.assertj)
     testImplementation(libs.reactor.test)

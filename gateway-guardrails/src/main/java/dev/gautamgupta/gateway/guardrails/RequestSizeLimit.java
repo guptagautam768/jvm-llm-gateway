@@ -5,8 +5,8 @@ import dev.gautamgupta.gateway.api.chat.ChatCompletionRequest;
 /**
  * First step of the ADR-0009 pipeline, before {@link PromptRedactor}.
  *
- * <p>Week 5 rejects an oversized body with HTTP 413. Week 4 does not enforce a limit.
- * An implementation may throw a runtime exception; the week 4 bean does not.
+ * <p>An oversized body throws {@link dev.gautamgupta.gateway.guardrails.pii.RequestTooLargeException}
+ * (HTTP 413). The week-4 no-op does not.
  */
 public interface RequestSizeLimit {
 

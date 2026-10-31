@@ -22,6 +22,7 @@ import org.springframework.http.codec.json.Jackson2JsonDecoder;
 import org.springframework.http.codec.json.Jackson2JsonEncoder;
 import org.springframework.boot.autoconfigure.jackson.Jackson2ObjectMapperBuilderCustomizer;
 import org.springframework.web.reactive.function.client.WebClient;
+import io.micrometer.observation.ObservationRegistry;
 import reactor.netty.http.client.HttpClient;
 
 @Configuration(proxyBeanMethods = false)
@@ -109,8 +110,9 @@ public class ProviderConfiguration {
     ChatCompletionService chatCompletionService(
             ProviderRegistry providerRegistry,
             ModelRouter modelRouter,
-            ProviderCallGuard providerCallGuard
+            ProviderCallGuard providerCallGuard,
+            ObservationRegistry observations
     ) {
-        return new ChatCompletionService(providerRegistry, modelRouter, providerCallGuard);
+        return new ChatCompletionService(providerRegistry, modelRouter, providerCallGuard, observations);
     }
 }

@@ -5,6 +5,8 @@ server:
 spring:
   application:
     name: jvm-llm-gateway
+  reactor:
+    context-propagation: auto
   lifecycle:
     timeout-per-shutdown-phase: 20s
   codec:
@@ -46,6 +48,14 @@ management:
   info:
     env:
       enabled: false
+  tracing:
+    sampling:
+      probability: ${GATEWAY_TRACING_SAMPLE_PROBABILITY:1.0}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://127.0.0.1:4318/v1/traces}
+      export:
+        enabled: ${OTEL_TRACES_EXPORT_ENABLED:false}
 
 logging:
   structured:
@@ -167,6 +177,20 @@ gateway:
       dimensions: 1536
       embedding-provider: openai
       embedding-model: text-embedding-3-small
+  # PII redact-and-forward (ADR-0009). Regex is a baseline, not a compliance guarantee.
+  # Responses are not scanned. Counts are metrics and a count-only log line.
+  guardrails:
+    mode: redact
+    max-request-bytes: 1048576
+    detectors:
+      email: true
+      phone: true
+      credit-card: true
+      ipv4: true
+      ipv6: true
+      iban: true
+      pan: true
+      aadhaar: true
 
 info:
   app:

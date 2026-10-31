@@ -4,11 +4,11 @@
 [![Java](https://img.shields.io/badge/Java-21-orange.svg)](https://openjdk.org/projects/jdk/21/)
 [![CI](https://github.com/guptagautam768/jvm-llm-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/guptagautam768/jvm-llm-gateway/actions/workflows/ci.yml)
 
-OpenAI-compatible LLM gateway for the JVM. Application teams point an OpenAI SDK at one base URL. The gateway owns provider access, routing, resilience, caller tenancy, a usage ledger, and response caching. PII redaction comes later.
+OpenAI-compatible LLM gateway for the JVM. Application teams point an OpenAI SDK at one base URL. The gateway owns provider access, routing, resilience, caller tenancy, a usage ledger, response caching, and PII redaction before a prompt leaves the process.
 
 This is a portfolio project for Gautam Gupta. It is platform infrastructure, not a RAG or agent product.
 
-Requirements: [SDR-0001](docs/sdr/0001-jvm-llm-gateway-sdr.md) (APPROVED v1.0). Decisions: [ADR index](docs/adr/README.md) (ADR-0001 through ADR-0013 Accepted).
+Requirements: [SDR-0001](docs/sdr/0001-jvm-llm-gateway-sdr.md) (APPROVED v1.0). Decisions: [ADR index](docs/adr/README.md) (ADR-0001 through ADR-0014 Accepted).
 
 ## Week 1 status
 
@@ -39,7 +39,7 @@ Shipped:
 - Anthropic chat, including SSE, behind the same `ProviderClient` port. The edge stays OpenAI-shaped. The API key is `ANTHROPIC_API_KEY`. See [ADR-0013](docs/adr/0013-anthropic-adapter-direct-webclient.md) for why this adapter is WebClient rather than Spring AI.
 - `GET /v1/models` lists configured aliases, then the concrete models on those routes. It does not call a provider.
 
-Caller API keys, budgets, and the usage ledger shipped in week 3. Response caching shipped in week 4. Still later: Ollama (FR-012), `POST /v1/embeddings` (FR-002), and PII redaction.
+Caller API keys, budgets, and the usage ledger shipped in week 3. Response caching shipped in week 4. PII redaction and the remaining observability series shipped in week 5. Still later: Ollama (FR-012) and `POST /v1/embeddings` (FR-002).
 
 The route timeout is the deadline for one target, including its retries. The next target gets its own deadline. Worst case for an alias is about `targets × timeout` when every target hangs. `fast` in the shipped file is two targets and 30s, so a fully hung route is about 60s before **504**. A 4xx fails immediately.
 
@@ -75,7 +75,7 @@ Shipped, on the one Redis Stack instance from Compose (ADR-0006):
 - `X-Cache-Bypass: true` (only that value, case-insensitive) skips lookup and write. `stream: true` is not cached (ADR-0006). The response header `X-Cache` is `exact`, `semantic`, `miss`, `bypass`, or `skip`.
 - A hit still needs a valid caller key, the request bucket, the tokens-per-minute bucket, and the pre-flight budget check. The ledger row stores the served tokens, `est_cost_micros`, and `cache=exact|semantic`. Redis token and dollar budgets do **not** increase on a hit: those counters are provider spend. `gateway.cost.estimated` follows that rule. `gateway.tokens` includes hits. `gateway.cache` records `result` (`hit` or `miss`) and `type` (`exact` or `semantic`). Embedding tokens are not added to the tenant budget.
 - A Redis or embedding failure on this path is a miss. The chat call continues. Rate-limit Redis failures stay **503**.
-- Week 5 hook, already in the pipeline: request size check (no-op), then `PromptRedactor` (no-op), then cache, then the provider. Cache keys and embeddings use the redactor's output. The cached body is the provider response; responses are not scanned.
+- Redaction runs before the cache key and the embedding (week 5). The cached body is the provider response; responses are not scanned.
 
 ```bash
 # Second identical call: X-Cache: exact, and the provider is not called.
@@ -101,6 +101,36 @@ gateway:
       cache:
         semantic: false
 ```
+
+## Week 5 status
+
+Milestone: **PII redaction and observability**.
+
+Shipped:
+
+- Order for every chat call, including `stream: true`: size check, then redaction, then the cache, then the provider. Streaming still does not read or write the cache. The prompt side is redacted; the completion is not scanned and is not re-hydrated.
+- Detectors: email, phone (E.164-ish and Indian mobiles, trunk `0`, and 11-digit STD), credit card (Luhn), IPv4, IPv6, IBAN (mod-97), Indian PAN, and Aadhaar (Verhoeff). Each can be turned off under `gateway.guardrails.detectors`. Placeholders look like `[EMAIL_1]` and stay stable for the same value inside one request.
+- Modes: `redact` (default), `reject` (**400** `pii_detected`), `off`. A tenant override is `gateway.guardrails.tenants.<tenant-id>.mode`. Reject does not call the provider and does not write the cache.
+- Message text over `gateway.guardrails.max-request-bytes` (default 1 MiB) is **413** `request_too_large`. The 2MB codec cap is unchanged.
+- Audit is counts only: `gateway.pii.redactions{type}` and a log line such as `pii redactions tenant=acme email=1`. The matched text is not logged, hashed, or stored. The usage ledger is unchanged.
+- This is a regex baseline. It misses names and addresses and it false-positives on some numbers. It is not a compliance guarantee.
+- Metrics on the management port, prefix `gateway.`: requests, provider latency, tokens, estimated cost, cache hit/miss, rate-limit rejections, price misses, PII redactions, provider errors, and fallbacks. The `tenant` tag stays off unless `gateway.tenancy.metrics-tenant-tag=true`.
+- Spans for auth, redaction, cache, and the provider call. Reactor context propagation is on. OTLP export is off until `OTEL_TRACES_EXPORT_ENABLED=true`. Logs are ECS JSON with `requestId` and `traceId`, and they do not include prompt or completion text.
+- `ops/grafana/gateway-dashboard.json` and a Prometheus scrape config. Compose profile `observability` adds Prometheus, Grafana, an OpenTelemetry collector, and Jaeger, all bound to localhost.
+
+```bash
+# Default: redact and forward. The provider sees [EMAIL_1], not the address.
+curl -s http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer lgw_${GATEWAY_BOOTSTRAP_KEY_ID}_${GATEWAY_BOOTSTRAP_KEY_SECRET}" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"gpt-4o-mini","temperature":0,"messages":[{"role":"user","content":"Email ada@example.com"}]}'
+
+# Traces, Prometheus, and Grafana. Export stays off unless the flag is set.
+OTEL_TRACES_EXPORT_ENABLED=true docker compose --profile observability up
+# Grafana http://127.0.0.1:3000  Prometheus http://127.0.0.1:9090  Jaeger http://127.0.0.1:16686
+```
+
+The numeric limit, the checksum rules, per-tenant config instead of a database column, and the two extra metric series are [ADR-0014](docs/adr/0014-guardrail-limits-and-week5-metrics.md) (Accepted).
 
 ## Architecture
 
@@ -144,7 +174,7 @@ Module layout (ADR-0002):
 | `gateway-cache` | Exact and semantic response cache on Redis Stack (ADR-0006) |
 | `gateway-tenancy` | API key hash and parse, Redis token bucket, budget counters, price math |
 | `gateway-persistence` | Flyway schema, R2DBC tenant lookup, async ledger, partition retention |
-| `gateway-guardrails` | Placeholder for ADR-0009 |
+| `gateway-guardrails` | PII redact-and-forward and the request-size check (ADR-0009) |
 | `build-logic` | Java 21 convention plugins and JaCoCo |
 
 ## Quickstart
@@ -246,11 +276,11 @@ Postgres and Redis must already be up (`docker compose up postgres redis`). Flyw
 
 `GET /v1/models` is served from the routing table, so it works without a caller key or a provider key. Chat without a valid caller key is **401** `invalid_api_key`. A valid key for a disabled tenant is **403** `tenant_disabled`. Over the request bucket or the token or dollar budget is **429** with `rate_limit_exceeded`, `token_budget_exceeded`, or `cost_budget_exceeded`, plus `Retry-After` and the `X-RateLimit-*` headers. Redis or Postgres being down on that path is **503** `dependency_unavailable`.
 
-An unknown `model` is **400** `invalid_request`. A missing `model` or `messages` field is the same. A 4xx from a provider, other than 429, is returned with that status and the provider error body (Anthropic errors are rewritten into the OpenAI error shape). Provider 429 is retried and then falls back. After the chain is exhausted, provider 5xx and connection failures are **502**, and timeouts are **504**. A missing key for the only target is **503** `provider_not_configured`.
+An unknown `model` is **400** `invalid_request`. A missing `model` or `messages` field is the same. A prompt with PII in `reject` mode is **400** `pii_detected`. A message over the guardrail size limit is **413** `request_too_large`. A 4xx from a provider, other than 429, is returned with that status and the provider error body (Anthropic errors are rewritten into the OpenAI error shape). Provider 429 is retried and then falls back. After the chain is exhausted, provider 5xx and connection failures are **502**, and timeouts are **504**. A missing key for the only target is **503** `provider_not_configured`.
 
 Anthropic requires `max_tokens`. If the client sends neither `max_tokens` nor `max_completion_tokens`, the gateway sends `gateway.providers.anthropic.default-max-tokens` (4096). Text content is translated. `n` greater than 1, and non-text content parts, are **400**. Tools, penalties, and `response_format` are not forwarded to Anthropic.
 
-Logs are JSON in Elastic Common Schema and do not include prompt text. Shutdown is graceful (`server.shutdown=graceful`).
+Logs are JSON in Elastic Common Schema, with `requestId` and `traceId`, and do not include prompt or completion text. Shutdown is graceful (`server.shutdown=graceful`). Actuator stays on port **8081** only.
 
 ### Tests
 
@@ -258,13 +288,13 @@ Logs are JSON in Elastic Common Schema and do not include prompt text. Shutdown 
 ./gradlew build
 ```
 
-WireMock stands in for OpenAI and Anthropic. `TenancyLedgerIT` uses Testcontainers (`postgres:16` and `redis/redis-stack-server`, the same image as Compose) for AC-009 and AC-012. `ResponseCacheIT` uses the same images for AC-006, AC-007, and AC-008: exact hit, semantic hit and miss around the 0.92 threshold, `X-Cache-Bypass`, tenant isolation, TTL, the temperature gate, streaming, and budget accounting on a hit. `RedisResponseCacheIT` covers the sorted-set caps and TTL against Redis Stack directly. `./gradlew build` also writes per-module JaCoCo reports and an aggregate at `build/reports/jacoco/jacocoRootReport/`. There is no coverage gate yet; ADR-0011 sets that after a baseline.
+WireMock stands in for OpenAI and Anthropic. `TenancyLedgerIT` uses Testcontainers (`postgres:16` and `redis/redis-stack-server`, the same image as Compose) for AC-009 and AC-012. `ResponseCacheIT` uses the same images for AC-006, AC-007, and AC-008, and for the proof that a redacted prompt is what the provider and the exact cache key use. `RedisResponseCacheIT` covers the sorted-set caps and TTL against Redis Stack directly. `GuardrailsWebTest` covers streaming redaction, the 413, the PII metric, and a log assertion that the prompt text is absent. `GuardrailsRejectWebTest` covers `pii_detected`. Detector unit tests include the false-positive cases. `./gradlew build` also writes per-module JaCoCo reports and an aggregate at `build/reports/jacoco/jacocoRootReport/`. There is no coverage gate yet; ADR-0011 sets that after a baseline.
 
 ## Wire format
 
 Requests and responses use snake_case. Modeled chat fields include `model`, `messages` (`role`, `content` as a string or array, `name`, `tool_calls`, `tool_call_id`), `temperature`, `top_p`, `n`, `stream`, `stream_options`, `stop`, `max_tokens`, `max_completion_tokens`, `presence_penalty`, `frequency_penalty`, `user`, `response_format`, `seed`, `tools`, `tool_choice`, `parallel_tool_calls`, and `logprobs`.
 
-Unknown JSON fields are ignored and are not forwarded (FR-001, the "ignore" option). Null fields are omitted on the way out. The codec limit is 2MB until the request-size guardrail (FR-051) lands.
+Unknown JSON fields are ignored and are not forwarded (FR-001, the "ignore" option). Null fields are omitted on the way out. The codec limit is 2MB. The guardrail limit is separate: UTF-8 bytes of message text, default 1 MiB, **413** `request_too_large`.
 
 ## Roadmap
 
@@ -273,7 +303,7 @@ Unknown JSON fields are ignored and are not forwarded (FR-001, the "ignore" opti
 | 2 | Routing and resilience | **Done:** YAML aliases, ordered fallback, Resilience4j retry / circuit breaker / time limiter (ADR-0005), Anthropic chat and SSE. **Still open:** Ollama (FR-012) and `POST /v1/embeddings` (FR-002). |
 | 3 | Tenancy and limits | **Done:** hashed API keys, Postgres tenants, Redis token bucket, token and dollar budgets, 429 contract (ADR-0007). Daily usage ledger and 30-day partition retention (ADR-0008). |
 | 4 | Semantic cache | **Done:** Redis exact-match and vector cache, TTL plus a size bound, `X-Cache-Bypass` (ADR-0006). **Still open:** Ollama embeddings and the public `POST /v1/embeddings` route. |
-| 5 | Guardrails and observability | PII redact-and-forward (ADR-0009), request size limits, the remaining Micrometer series, OpenTelemetry traces, Grafana dashboard (ADR-0010). |
+| 5 | Guardrails and observability | **Done:** PII redact-and-forward (ADR-0009), request size limit, Micrometer series including PII, provider errors, and fallbacks, OpenTelemetry traces, Grafana dashboard (ADR-0010). **Accepted:** [ADR-0014](docs/adr/0014-guardrail-limits-and-week5-metrics.md) for the size default, checksums, and the two extra series. |
 | 6 | Polish | OpenAI Java SDK contract test, JaCoCo baseline gate, load-test notes, demo script. Testcontainers for limits and the ledger already run in week 3. |
 
 ## License

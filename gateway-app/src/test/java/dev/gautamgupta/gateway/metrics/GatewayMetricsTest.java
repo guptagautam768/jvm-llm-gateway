@@ -46,7 +46,16 @@ class GatewayMetricsTest {
         assertThat(registry.find("gateway.provider.latency").timers()).isEmpty();
         metrics.recordLedgerWrite(true);
         metrics.recordLedgerWrite(false);
+        metrics.recordPiiRedactions(java.util.Map.of("email", 2, "phone", 1), "acme");
+        metrics.recordProviderError("openai", "upstream_5xx");
+        metrics.recordFallback("openai", "anthropic");
         assertThat(registry.get("gateway.ledger.writes").tag("result", "success").counter().count()).isEqualTo(1);
         assertThat(registry.get("gateway.ledger.writes").tag("result", "failure").counter().count()).isEqualTo(1);
+        assertThat(registry.get("gateway.pii.redactions").tag("type", "email").counter().count()).isEqualTo(2);
+        assertThat(registry.get("gateway.pii.redactions").tag("type", "phone").counter().count()).isEqualTo(1);
+        assertThat(registry.get("gateway.pii.redactions").tag("type", "email").meter().getId().getTag("tenant")).isNull();
+        assertThat(registry.get("gateway.provider.errors").tag("kind", "upstream_5xx").counter().count()).isEqualTo(1);
+        assertThat(registry.get("gateway.fallbacks").tag("from", "openai").tag("to", "anthropic").counter().count())
+                .isEqualTo(1);
     }
 }

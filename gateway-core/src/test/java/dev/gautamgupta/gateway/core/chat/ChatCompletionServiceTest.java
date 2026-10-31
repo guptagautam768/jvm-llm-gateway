@@ -21,6 +21,9 @@ import dev.gautamgupta.gateway.core.routing.RetrySettings;
 import dev.gautamgupta.gateway.core.routing.RouteDefinition;
 import dev.gautamgupta.gateway.core.routing.RouteTarget;
 import dev.gautamgupta.gateway.core.routing.RoutingPolicy;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationHandler;
+import io.micrometer.observation.ObservationRegistry;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -31,6 +34,51 @@ import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 class ChatCompletionServiceTest {
+
+    @Test
+    void providerSpanAndFallbackAreRecordedWithoutThePrompt() {
+        ObservationRegistry registry = ObservationRegistry.create();
+        java.util.List<String> names = new java.util.ArrayList<>();
+        registry.observationConfig().observationHandler(new ObservationHandler<Observation.Context>() {
+            @Override
+            public void onStart(Observation.Context context) {
+                names.add(context.getName());
+                assertThat(context.toString()).doesNotContain("Hello");
+            }
+
+            @Override
+            public boolean supportsContext(Observation.Context context) {
+                return true;
+            }
+        });
+        FakeProvider openai = new FakeProvider(ProviderIds.OPENAI);
+        openai.failWith = ProviderException.upstream(ProviderIds.OPENAI, 500, "{\"error\":{\"message\":\"down\"}}", null);
+        FakeProvider anthropic = new FakeProvider(ProviderIds.ANTHROPIC);
+        RoutingPolicy policy = policy(route(
+                "fast",
+                target(ProviderIds.OPENAI, "gpt-4o-mini"),
+                target(ProviderIds.ANTHROPIC, "claude-haiku-4-5")));
+        ChatCompletionService service = new ChatCompletionService(
+                new ProviderRegistry(java.util.List.of(openai, anthropic)),
+                new ModelRouter(policy),
+                new ProviderCallGuard(policy.circuitBreaker()),
+                registry);
+        AttemptTrace trace = new AttemptTrace();
+
+        StepVerifier.create(service.complete(request("fast"), trace))
+                .assertNext(response -> assertThat(response.model()).isEqualTo("fast"))
+                .verifyComplete();
+
+        assertThat(trace.errors()).singleElement().satisfies(error -> {
+            assertThat(error.provider()).isEqualTo("openai");
+            assertThat(error.kind()).isEqualTo("upstream_5xx");
+        });
+        assertThat(trace.fallbacks()).singleElement().satisfies(fallback -> {
+            assertThat(fallback.fromProvider()).isEqualTo("openai");
+            assertThat(fallback.toProvider()).isEqualTo("anthropic");
+        });
+        assertThat(names).contains("gateway.provider");
+    }
 
     @Test
     void rejectsAMissingModelBeforeCallingTheProvider() {

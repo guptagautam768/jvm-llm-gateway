@@ -12,6 +12,7 @@ import dev.gautamgupta.gateway.tenancy.apikey.ApiKeyRecord;
 import dev.gautamgupta.gateway.tenancy.apikey.TenantAuthenticator;
 import dev.gautamgupta.gateway.tenancy.error.TenancyException;
 import dev.gautamgupta.gateway.tenancy.limit.RequestLimiter;
+import io.micrometer.observation.ObservationRegistry;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
@@ -44,19 +45,22 @@ public final class ChatTenancyWebFilter implements WebFilter, Ordered {
     private final UsageLedger ledger;
     private final GatewayMetrics metrics;
     private final ObjectMapper objectMapper;
+    private final ObservationRegistry observations;
 
     public ChatTenancyWebFilter(
             TenantAuthenticator authenticator,
             RequestLimiter limiter,
             UsageLedger ledger,
             GatewayMetrics metrics,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            ObservationRegistry observations
     ) {
         this.authenticator = authenticator;
         this.limiter = limiter;
         this.ledger = ledger;
         this.metrics = metrics;
         this.objectMapper = objectMapper;
+        this.observations = observations == null ? ObservationRegistry.NOOP : observations;
     }
 
     @Override
@@ -73,15 +77,16 @@ public final class ChatTenancyWebFilter implements WebFilter, Ordered {
         String presented = credential(exchange.getRequest());
         if (presented == null) {
             metrics.recordAccess("chat.completions", "401", null);
-            return write(exchange, TenancyException.invalidApiKey());
+            return Spans.mono(observations, "gateway.auth", write(exchange, TenancyException.invalidApiKey()));
         }
-        return authenticator.authenticate(presented)
-                .flatMap(record -> limiter.consume(
-                                "rl:" + record.tenantId(),
-                                record.limits().rateCapacity(),
-                                record.limits().rateRefillPerSecond(),
-                                1)
-                        .flatMap(decision -> afterLimit(exchange, chain, record, decision)))
+        return Spans.mono(observations, "gateway.auth", authenticator.authenticate(presented)
+                        .flatMap(record -> limiter.consume(
+                                        "rl:" + record.tenantId(),
+                                        record.limits().rateCapacity(),
+                                        record.limits().rateRefillPerSecond(),
+                                        1)
+                                .map(decision -> new Authed(record, decision))))
+                .flatMap(authed -> afterLimit(exchange, chain, authed.record(), authed.decision()))
                 .onErrorResume(TenancyException.class, ex -> {
                     if (ex.kind() == TenancyException.Kind.DEPENDENCY) {
                         metrics.recordAccess("chat.completions", "503", null);
@@ -181,5 +186,8 @@ public final class ChatTenancyWebFilter implements WebFilter, Ordered {
             return null;
         }
         return apiKey.trim();
+    }
+
+    private record Authed(ApiKeyRecord record, dev.gautamgupta.gateway.tenancy.limit.RateLimitDecision decision) {
     }
 }

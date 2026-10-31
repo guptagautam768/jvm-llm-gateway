@@ -175,6 +175,45 @@ class ResponseCacheIT {
     }
 
     @Test
+    void redactedPromptIsWhatTheProviderAndTheCacheKeyUse() {
+        String raw = "Email ada.lovelace@example.com about the invoice";
+        String redacted = "Email [EMAIL_1] about the invoice";
+        stubEmbedding(redacted, AXIS_X);
+        stubChat("Noted");
+
+        chat(token("acmekey"), chatBody(null, raw, 0.0), "pii-cache-1", null)
+                .expectStatus().isOk()
+                .expectHeader().valueEquals(ChatCompletionsController.CACHE_HEADER, "miss")
+                .expectBody()
+                .jsonPath("$.choices[0].message.content").isEqualTo("Noted");
+
+        for (var event : WIRE_MOCK.getAllServeEvents()) {
+            String body = event.getRequest().getBodyAsString();
+            assertThat(body).doesNotContain("ada.lovelace@example.com");
+            assertThat(body).contains("[EMAIL_1]");
+        }
+
+        WIRE_MOCK.resetAll();
+        stubChat("Other");
+        chat(token("acmekey"), chatBody(null, redacted, 0.0), "pii-cache-2", null)
+                .expectStatus().isOk()
+                .expectHeader().valueEquals(ChatCompletionsController.CACHE_HEADER, "exact")
+                .expectBody()
+                .jsonPath("$.choices[0].message.content").isEqualTo("Noted");
+        assertThat(calls("/v1/chat/completions")).isZero();
+
+        java.util.List<String> keys = redis.keys("cache:x:*").collectList().block(Duration.ofSeconds(5));
+        assertThat(keys).isNotEmpty();
+        for (String key : keys) {
+            String value = redis.opsForValue().get(key).block(Duration.ofSeconds(5));
+            if (value != null) {
+                assertThat(value).doesNotContain("ada.lovelace@example.com");
+            }
+        }
+        assertThat(prometheus()).contains("gateway_pii_redactions_total").contains("type=\"email\"");
+    }
+
+    @Test
     void semanticHitAndMissFollowTheThreshold() {
         stubEmbedding("capital of France", AXIS_X);
         stubEmbedding("France's capital city", NEAR);

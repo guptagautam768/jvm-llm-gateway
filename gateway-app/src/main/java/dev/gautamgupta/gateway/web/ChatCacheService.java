@@ -12,6 +12,12 @@ import dev.gautamgupta.gateway.core.routing.ResolvedRoute;
 import dev.gautamgupta.gateway.core.routing.RouteTarget;
 import dev.gautamgupta.gateway.guardrails.PromptRedactor;
 import dev.gautamgupta.gateway.guardrails.RequestSizeLimit;
+import dev.gautamgupta.gateway.guardrails.pii.PiiDetectedException;
+import dev.gautamgupta.gateway.guardrails.pii.RedactionCounts;
+import dev.gautamgupta.gateway.guardrails.pii.RedactionResult;
+import dev.gautamgupta.gateway.metrics.GatewayMetrics;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,9 +26,8 @@ import reactor.core.publisher.Mono;
 /**
  * ADR-0009 order for one chat request: size limit, then redaction, then the cache.
  *
- * <p>The size limit and the redactor are no-ops until week 5. Both still run, and the
- * provider is called with the redacted request, so a later detector cannot be skipped
- * by the cache. Streaming and {@code X-Cache-Bypass: true} skip lookup and write.
+ * <p>Streaming and {@code X-Cache-Bypass: true} skip lookup and write. Redaction still runs,
+ * including for streams, and the provider is called with the redacted request.
  */
 public final class ChatCacheService {
 
@@ -33,6 +38,8 @@ public final class ChatCacheService {
     private final ResponseCache cache;
     private final PromptRedactor redactor;
     private final RequestSizeLimit sizeLimit;
+    private final GatewayMetrics metrics;
+    private final ObservationRegistry observations;
 
     public ChatCacheService(
             CacheProperties properties,
@@ -41,21 +48,46 @@ public final class ChatCacheService {
             PromptRedactor redactor,
             RequestSizeLimit sizeLimit
     ) {
+        this(properties, router, cache, redactor, sizeLimit, null, ObservationRegistry.NOOP);
+    }
+
+    public ChatCacheService(
+            CacheProperties properties,
+            ModelRouter router,
+            ResponseCache cache,
+            PromptRedactor redactor,
+            RequestSizeLimit sizeLimit,
+            GatewayMetrics metrics,
+            ObservationRegistry observations
+    ) {
         this.properties = properties;
         this.router = router;
         this.cache = cache;
         this.redactor = redactor;
         this.sizeLimit = sizeLimit;
+        this.metrics = metrics;
+        this.observations = observations == null ? ObservationRegistry.NOOP : observations;
     }
 
     public Mono<CacheDecision> lookup(String tenantId, ChatCompletionRequest request, CacheMode mode) {
         sizeLimit.check(request);
-        ChatCompletionRequest redacted = redactor.redact(request);
+        RedactionResult redaction = redact(request, tenantId);
+        if (metrics != null) {
+            metrics.recordPiiRedactions(redaction.counts(), tenantId);
+        }
+        if (!redaction.counts().isEmpty()) {
+            log.info("pii redactions tenant={} {}", tenantId == null || tenantId.isBlank() ? "none" : tenantId,
+                    RedactionCounts.format(redaction.counts()));
+        }
+        if (redaction.rejected()) {
+            throw new PiiDetectedException(redaction.counts());
+        }
+        ChatCompletionRequest redacted = redaction.request();
         if (!properties.isEnabled() || mode != CacheMode.USE || tenantId == null || tenantId.isBlank()) {
             return Mono.just(new CacheDecision(redacted, null, null, skipHeader(mode)));
         }
         CacheQuery query = query(tenantId, redacted);
-        return cache.read(query)
+        return Spans.mono(observations, "gateway.cache", cache.read(query))
                 .map(read -> new CacheDecision(redacted, query, read, read.hit() != null ? read.hitType() : "miss"))
                 .onErrorResume(error -> {
                     log.warn("cache lookup failed ({})", error.getClass().getSimpleName());
@@ -65,6 +97,18 @@ public final class ChatCacheService {
                             CacheRead.miss(List.of(), null),
                             "miss"));
                 });
+    }
+
+    private RedactionResult redact(ChatCompletionRequest request, String tenantId) {
+        Observation observation = Spans.start(observations, "gateway.redaction");
+        try {
+            return redactor.apply(request, tenantId);
+        } catch (RuntimeException ex) {
+            observation.error(ex);
+            throw ex;
+        } finally {
+            observation.stop();
+        }
     }
 
     public Mono<Void> store(CacheDecision decision, CachedCompletion completion) {

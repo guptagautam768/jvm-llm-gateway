@@ -8,6 +8,8 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.time.Duration;
+import java.util.Map;
+import java.util.Set;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -95,6 +97,45 @@ public class GatewayMetrics {
                 .increment();
     }
 
+    public void recordPiiRedactions(Map<String, Integer> counts, String tenantId) {
+        if (counts == null || counts.isEmpty()) {
+            return;
+        }
+        counts.forEach((type, count) -> {
+            if (type == null || count == null || count <= 0 || !PII_TYPES.contains(type)) {
+                return;
+            }
+            Counter.Builder redactions = Counter.builder("gateway.pii.redactions")
+                    .description("PII spans redacted or rejected, by entity type")
+                    .tag("type", type);
+            tagTenant(redactions, tenantId);
+            redactions.register(meterRegistry).increment(count);
+        });
+    }
+
+    public void recordProviderError(String provider, String kind) {
+        Counter.builder("gateway.provider.errors")
+                .description("Failed provider targets")
+                .tags("provider", modelTag(provider), "kind", errorKind(kind))
+                .register(meterRegistry)
+                .increment();
+    }
+
+    public void recordFallback(String fromProvider, String toProvider) {
+        Counter.builder("gateway.fallbacks")
+                .description("Fallbacks from a failed provider target to the next one")
+                .tags("from", modelTag(fromProvider), "to", modelTag(toProvider))
+                .register(meterRegistry)
+                .increment();
+    }
+
+    private static String errorKind(String kind) {
+        if (kind != null && ERROR_KINDS.contains(kind)) {
+            return kind;
+        }
+        return "other";
+    }
+
     private void record(String route, String provider, String model, String status, long startNanos, String tenantId) {
         requestCounter(route, provider, model, status, tenantId).increment();
         Timer.builder("gateway.provider.latency")
@@ -145,6 +186,22 @@ public class GatewayMetrics {
     private static String modelTag(String model) {
         return model == null || model.isBlank() ? "none" : model;
     }
+
+    private static final Set<String> PII_TYPES = Set.of(
+            "email", "phone", "credit_card", "ipv4", "ipv6", "iban", "pan", "aadhaar");
+
+    private static final Set<String> ERROR_KINDS = Set.of(
+            "timeout",
+            "unavailable",
+            "circuit_open",
+            "malformed",
+            "not_configured",
+            "unsupported",
+            "upstream_429",
+            "upstream_5xx",
+            "upstream_4xx",
+            "upstream",
+            "other");
 
     static String statusOf(Throwable error) {
         if (error instanceof TenancyException tenancy) {

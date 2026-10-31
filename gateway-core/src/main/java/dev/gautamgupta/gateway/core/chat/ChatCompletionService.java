@@ -10,9 +10,13 @@ import dev.gautamgupta.gateway.core.provider.ProviderException;
 import dev.gautamgupta.gateway.core.provider.ProviderRegistry;
 import dev.gautamgupta.gateway.core.routing.ModelRouter;
 import dev.gautamgupta.gateway.core.routing.ProviderCallGuard;
+import dev.gautamgupta.gateway.core.routing.ProviderErrorKinds;
 import dev.gautamgupta.gateway.core.routing.ProviderFailures;
 import dev.gautamgupta.gateway.core.routing.ResolvedRoute;
 import dev.gautamgupta.gateway.core.routing.RouteTarget;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
+import io.micrometer.observation.contextpropagation.ObservationThreadLocalAccessor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,15 +35,26 @@ public final class ChatCompletionService {
     private final ProviderRegistry registry;
     private final ModelRouter router;
     private final ProviderCallGuard guard;
+    private final ObservationRegistry observations;
 
     public ChatCompletionService(
             ProviderRegistry registry,
             ModelRouter router,
             ProviderCallGuard guard
     ) {
+        this(registry, router, guard, ObservationRegistry.NOOP);
+    }
+
+    public ChatCompletionService(
+            ProviderRegistry registry,
+            ModelRouter router,
+            ProviderCallGuard guard,
+            ObservationRegistry observations
+    ) {
         this.registry = registry;
         this.router = router;
         this.guard = guard;
+        this.observations = observations == null ? ObservationRegistry.NOOP : observations;
     }
 
     public void validate(ChatCompletionRequest request) {
@@ -97,14 +112,20 @@ public final class ChatCompletionService {
         ProviderClient client = registry.get(target.provider());
         ChatCompletionRequest upstream = request.withModel(target.model()).withStream(null);
         return Mono.defer(() -> {
+            Observation observation = startObservation(client.id(), target.model());
             try {
                 client.ensureConfigured();
             } catch (RuntimeException ex) {
+                observation.error(ex);
+                observation.stop();
                 return Mono.error(ex);
             }
             trace.record(client.id(), target.model());
             return guard.guard(client.id(), target.model(), route.timeout(), route.retry(), client.complete(upstream))
-                    .map(response -> rewrite(response, request.model()));
+                    .map(response -> rewrite(response, request.model()))
+                    .doOnError(observation::error)
+                    .doFinally(signal -> observation.stop())
+                    .contextWrite(context -> context.put(ObservationThreadLocalAccessor.KEY, observation));
         }).onErrorResume(error -> continueAfter(route, request, index, previous, trace, error));
     }
 
@@ -123,16 +144,22 @@ public final class ChatCompletionService {
         ChatCompletionRequest upstream = request.withModel(target.model()).withStream(true);
         AtomicBoolean emitted = new AtomicBoolean(false);
         return Flux.defer(() -> {
+            Observation observation = startObservation(client.id(), target.model());
             try {
                 client.ensureConfigured();
             } catch (RuntimeException ex) {
+                observation.error(ex);
+                observation.stop();
                 return Flux.error(ex);
             }
             trace.record(client.id(), target.model());
             return guard.guardStream(
                             client.id(), target.model(), route.timeout(), route.retry(), client.stream(upstream))
                     .doOnNext(ignored -> emitted.set(true))
-                    .map(chunk -> rewrite(chunk, request.model()));
+                    .map(chunk -> rewrite(chunk, request.model()))
+                    .doOnError(observation::error)
+                    .doFinally(signal -> observation.stop())
+                    .contextWrite(context -> context.put(ObservationThreadLocalAccessor.KEY, observation));
         }).onErrorResume(error -> {
             if (emitted.get()) {
                 return Flux.error(error);
@@ -150,6 +177,7 @@ public final class ChatCompletionService {
             Throwable error
     ) {
         Throwable chosen = prefer(previous, error);
+        noteFailure(route, index, trace, error);
         if (ProviderFailures.fallbackEligible(error) && index + 1 < route.targets().size()) {
             RouteTarget next = route.targets().get(index + 1);
             log.warn(
@@ -176,6 +204,7 @@ public final class ChatCompletionService {
             Throwable error
     ) {
         Throwable chosen = prefer(previous, error);
+        noteFailure(route, index, trace, error);
         if (ProviderFailures.fallbackEligible(error) && index + 1 < route.targets().size()) {
             RouteTarget next = route.targets().get(index + 1);
             log.warn(
@@ -237,6 +266,22 @@ public final class ChatCompletionService {
             }
             case UNAVAILABLE, MALFORMED -> ProviderException.exhausted(providerException.providerId());
         };
+    }
+
+    private static void noteFailure(ResolvedRoute route, int index, AttemptTrace trace, Throwable error) {
+        String provider = route.targets().get(index).provider();
+        trace.noteProviderError(provider, ProviderErrorKinds.of(error));
+        if (ProviderFailures.fallbackEligible(error) && index + 1 < route.targets().size()) {
+            trace.noteFallback(provider, route.targets().get(index + 1).provider());
+        }
+    }
+
+    private Observation startObservation(String provider, String model) {
+        return Observation.createNotStarted("gateway.provider", observations)
+                .lowCardinalityKeyValue("provider", provider == null || provider.isBlank() ? "none" : provider)
+                .lowCardinalityKeyValue("operation", "chat")
+                .highCardinalityKeyValue("model", model == null || model.isBlank() ? "none" : model)
+                .start();
     }
 
     private static int statusOf(Throwable error) {
