@@ -35,6 +35,20 @@ public final class TokenEstimator {
         return new UsageEstimate(prompt, completion);
     }
 
+    /** Embeddings reserve no completion tokens. At least one prompt token is charged. */
+    public UsageEstimate estimateInputs(java.util.List<String> texts) {
+        int prompt = 0;
+        if (texts != null) {
+            for (String text : texts) {
+                prompt += charsToTokens(text);
+            }
+        }
+        if (prompt < 1) {
+            prompt = 1;
+        }
+        return new UsageEstimate(prompt, 0);
+    }
+
     static int tokens(JsonNode content) {
         if (content == null || content.isNull()) {
             return 0;

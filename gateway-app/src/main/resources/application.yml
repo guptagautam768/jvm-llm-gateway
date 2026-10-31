@@ -5,6 +5,9 @@ server:
 spring:
   application:
     name: jvm-llm-gateway
+  webflux:
+    problemdetails:
+      enabled: false
   reactor:
     context-propagation: auto
   lifecycle:
@@ -101,6 +104,17 @@ gateway:
         max-attempts: 2
         backoff: 200ms
         multiplier: 2
+    embed:
+      targets:
+        - provider: openai
+          model: text-embedding-3-small
+        - provider: ollama
+          model: nomic-embed-text
+      timeout: 30s
+      retry:
+        max-attempts: 2
+        backoff: 200ms
+        multiplier: 2
   providers:
     openai:
       base-url: ${OPENAI_BASE_URL:https://api.openai.com}
@@ -119,6 +133,14 @@ gateway:
       connect-timeout: 5s
       response-timeout: 120s
       default-max-tokens: 4096
+      max-in-memory-bytes: 2097152
+    ollama:
+      base-url: ${OLLAMA_BASE_URL:http://127.0.0.1:11434}
+      api-key: ${OLLAMA_API_KEY:}
+      chat-path: /api/chat
+      embed-path: /api/embed
+      connect-timeout: 5s
+      response-timeout: 120s
       max-in-memory-bytes: 2097152
   # Caller keys are bootstrapped from the environment and stored as SHA-256 (ADR-0007).
   # Leave the secret empty to start without a key. Postgres and Redis are required while
@@ -161,6 +183,14 @@ gateway:
     claude-sonnet-4-5:
       prompt-per-1k-usd: "0.00300"
       completion-per-1k-usd: "0.01500"
+    # Published OpenAI list prices (USD per 1K tokens), not a measured invoice.
+    # Ollama models with no row are 0 USD. An explicit row overrides that default.
+    text-embedding-3-small:
+      prompt-per-1k-usd: "0.00002"
+      completion-per-1k-usd: "0"
+    text-embedding-3-large:
+      prompt-per-1k-usd: "0.00013"
+      completion-per-1k-usd: "0"
   # Exact and semantic response cache (ADR-0006). One Redis Stack instance, shared
   # with rate limits. Streaming is not cached. See the README for the threshold.
   cache:

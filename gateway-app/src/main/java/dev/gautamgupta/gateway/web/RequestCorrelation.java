@@ -7,20 +7,25 @@ import org.slf4j.Logger;
 import org.slf4j.MDC;
 import reactor.util.context.ContextView;
 
-/** Correlation fields for one chat call. The message never includes prompt or completion text. */
+/** Correlation fields for one API call. The message never includes prompt or completion text. */
 final class RequestCorrelation {
 
     private RequestCorrelation() {
     }
 
     static void logChat(Logger log, ContextView context, String model, boolean stream) {
+        logRequest(log, context, "chat.completions", model, stream);
+    }
+
+    static void logRequest(Logger log, ContextView context, String route, String model, boolean stream) {
         String requestId = context.getOrDefault(RequestIdThreadLocalAccessor.KEY, "none");
         String traceId = traceId(context);
         MDC.put(RequestIdThreadLocalAccessor.KEY, requestId);
         MDC.put("traceId", traceId);
         try {
             log.info(
-                    "chat completions model={} stream={} requestId={} traceId={}",
+                    "request route={} model={} stream={} requestId={} traceId={}",
+                    route,
                     model,
                     stream,
                     requestId,

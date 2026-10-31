@@ -25,4 +25,12 @@ public final class ConfiguredRequestSizeLimit implements RequestSizeLimit {
             throw new RequestTooLargeException(bytes, limitBytes);
         }
     }
+
+    @Override
+    public void checkBytes(long utf8Bytes) {
+        if (limitBytes <= 0 || utf8Bytes <= limitBytes) {
+            return;
+        }
+        throw new RequestTooLargeException(utf8Bytes, limitBytes);
+    }
 }

@@ -2,7 +2,7 @@ package dev.gautamgupta.gateway.core.provider;
 
 /**
  * Stable provider ids used by routing config (ADR-0005).
- * OpenAI and Anthropic have adapters. Ollama is reserved until that adapter exists.
+ * OpenAI, Anthropic, and Ollama each have an adapter. Ids are stable in YAML.
  */
 public final class ProviderIds {
 

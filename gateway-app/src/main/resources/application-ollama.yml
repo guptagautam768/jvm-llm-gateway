@@ -1,0 +1,39 @@
+# Local models only. Activate with SPRING_PROFILES_ACTIVE=ollama.
+# Pull the models first: ollama pull llama3.2 && ollama pull nomic-embed-text
+# nomic-embed-text publishes 768-dimensional vectors. A Redis index created at 1536
+# must be dropped before this profile is used against an existing Redis:
+#   FT.DROPINDEX gateway:cache:semantic
+gateway:
+  routes:
+    fast:
+      targets:
+        - provider: ollama
+          model: ${OLLAMA_CHAT_MODEL:llama3.2}
+      timeout: 120s
+      retry:
+        max-attempts: 1
+        backoff: 200ms
+        multiplier: 1
+    smart:
+      targets:
+        - provider: ollama
+          model: ${OLLAMA_CHAT_MODEL:llama3.2}
+      timeout: 180s
+      retry:
+        max-attempts: 1
+        backoff: 200ms
+        multiplier: 1
+    embed:
+      targets:
+        - provider: ollama
+          model: ${OLLAMA_EMBED_MODEL:nomic-embed-text}
+      timeout: 60s
+      retry:
+        max-attempts: 1
+        backoff: 200ms
+        multiplier: 1
+  cache:
+    semantic:
+      embedding-provider: ollama
+      embedding-model: ${OLLAMA_EMBED_MODEL:nomic-embed-text}
+      dimensions: ${OLLAMA_EMBED_DIMENSIONS:768}

@@ -6,6 +6,8 @@ import java.math.RoundingMode;
 /** USD per 1K tokens. Cost is returned in micro-dollars (1 USD = 1_000_000). */
 public record ModelPrice(BigDecimal promptPer1kUsd, BigDecimal completionPer1kUsd) {
 
+    public static final ModelPrice ZERO = new ModelPrice(BigDecimal.ZERO, BigDecimal.ZERO);
+
     public ModelPrice {
         if (promptPer1kUsd == null || completionPer1kUsd == null) {
             throw new IllegalArgumentException("price is required");

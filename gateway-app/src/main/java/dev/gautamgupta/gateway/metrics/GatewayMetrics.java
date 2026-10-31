@@ -46,12 +46,17 @@ public class GatewayMetrics {
     }
 
     public void recordRejection(String reason, String model, String tenantId) {
+        recordRejection("chat.completions", reason, model, tenantId);
+    }
+
+    public void recordRejection(String route, String reason, String model, String tenantId) {
         Counter.Builder rejection = Counter.builder("gateway.ratelimit.rejections")
                 .description("Rate limit and budget rejections")
                 .tag("reason", reason);
         tagTenant(rejection, tenantId);
         rejection.register(meterRegistry).increment();
-        requestCounter("chat.completions", "none", model, "429", tenantId).increment();
+        String routeTag = route == null || route.isBlank() ? "chat.completions" : route;
+        requestCounter(routeTag, "none", model, "429", tenantId).increment();
     }
 
     public void recordEstimatedCost(String model, long micros, String tenantId) {

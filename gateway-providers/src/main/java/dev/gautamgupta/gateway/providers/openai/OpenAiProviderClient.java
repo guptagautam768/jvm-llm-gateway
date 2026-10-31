@@ -31,9 +31,8 @@ import reactor.core.publisher.Mono;
  *
  * <p>ADR-0012: this adapter calls the OpenAI REST API with {@link WebClient} so the
  * wire format survives the hop and WireMock can see it. ADR-0004's {@link ProviderClient}
- * port is unchanged. Anthropic and Ollama may still use Spring AI behind that port.
- * {@link #embed} calls {@code /v1/embeddings} for the semantic cache. The public
- * embeddings route is not exposed.
+ * port is unchanged. {@link #embed} calls {@code /v1/embeddings} for the semantic cache
+ * and for the public embeddings route.
  */
 public final class OpenAiProviderClient implements ProviderClient {
 
@@ -56,7 +55,6 @@ public final class OpenAiProviderClient implements ProviderClient {
 
     @Override
     public ProviderCapabilities capabilities() {
-        // The adapter can embed. POST /v1/embeddings on the gateway is still not exposed.
         return new ProviderCapabilities(true, true, true);
     }
 

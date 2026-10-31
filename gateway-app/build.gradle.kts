@@ -29,6 +29,7 @@ dependencies {
     implementation(libs.opentelemetry.exporter.otlp)
 
     testImplementation(libs.spring.boot.starter.test)
+    testImplementation(libs.openai.java)
     testImplementation(libs.wiremock)
     testImplementation(libs.resilience4j.circuitbreaker)
     testImplementation(libs.spring.boot.testcontainers)

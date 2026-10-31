@@ -1,0 +1,23 @@
+{
+  "priority": 5,
+  "request": {
+    "method": "POST",
+    "url": "/api/chat",
+    "bodyPatterns": [
+      { "matchesJsonPath": "$[?(@.stream == false)]" }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "model": "llama3.2",
+      "created_at": "2026-01-01T00:00:00Z",
+      "message": { "role": "assistant", "content": "Hello from the demo." },
+      "done": true,
+      "done_reason": "stop",
+      "prompt_eval_count": 8,
+      "eval_count": 5
+    }
+  }
+}

@@ -4,6 +4,8 @@ import dev.gautamgupta.gateway.guardrails.PromptRedactor;
 import dev.gautamgupta.gateway.guardrails.RequestSizeLimit;
 import dev.gautamgupta.gateway.guardrails.pii.ConfiguredRequestSizeLimit;
 import dev.gautamgupta.gateway.guardrails.pii.PiiRedactionPipeline;
+import dev.gautamgupta.gateway.metrics.GatewayMetrics;
+import dev.gautamgupta.gateway.web.EmbeddingGuard;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -21,5 +23,10 @@ public class GuardrailsConfiguration {
     @Bean
     PromptRedactor promptRedactor(GuardrailsProperties properties) {
         return PiiRedactionPipeline.create(properties.toSettings());
+    }
+
+    @Bean
+    EmbeddingGuard embeddingGuard(PromptRedactor redactor, RequestSizeLimit sizeLimit, GatewayMetrics metrics) {
+        return new EmbeddingGuard(redactor, sizeLimit, metrics);
     }
 }

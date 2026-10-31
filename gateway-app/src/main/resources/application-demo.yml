@@ -1,0 +1,34 @@
+# Scripted demo against WireMock pretending to be Ollama. Semantic cache stays off
+# so the demo does not depend on vector dimensions. Exact cache still runs.
+gateway:
+  routes:
+    fast:
+      targets:
+        - provider: ollama
+          model: llama3.2
+      timeout: 30s
+      retry:
+        max-attempts: 1
+        backoff: 200ms
+        multiplier: 1
+    smart:
+      targets:
+        - provider: ollama
+          model: llama3.2
+      timeout: 30s
+      retry:
+        max-attempts: 1
+        backoff: 200ms
+        multiplier: 1
+    embed:
+      targets:
+        - provider: ollama
+          model: nomic-embed-text
+      timeout: 30s
+      retry:
+        max-attempts: 1
+        backoff: 200ms
+        multiplier: 1
+  cache:
+    semantic:
+      enabled: false

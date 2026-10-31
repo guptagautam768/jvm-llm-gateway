@@ -11,4 +11,11 @@ import dev.gautamgupta.gateway.api.chat.ChatCompletionRequest;
 public interface RequestSizeLimit {
 
     void check(ChatCompletionRequest request);
+
+    /**
+     * Same limit as {@link #check(ChatCompletionRequest)}, for a byte count the caller
+     * already measured (embeddings input). The default does not reject.
+     */
+    default void checkBytes(long utf8Bytes) {
+    }
 }

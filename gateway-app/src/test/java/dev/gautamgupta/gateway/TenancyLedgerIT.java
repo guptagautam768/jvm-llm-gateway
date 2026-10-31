@@ -391,6 +391,73 @@ class TenancyLedgerIT {
                 .jsonPath("$.status").isEqualTo("UP");
     }
 
+    @Test
+    void embeddingsUseTheSameKeyBudgetAndLedger() {
+        webTestClient.post()
+                .uri("/v1/embeddings")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("{\"model\":\"embed\",\"input\":\"hello\"}")
+                .exchange()
+                .expectStatus().isUnauthorized()
+                .expectBody()
+                .jsonPath("$.error.code").isEqualTo("invalid_api_key");
+
+        WIRE_MOCK.stubFor(post(urlEqualTo("/v1/embeddings"))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("""
+                                {"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1]}],"model":"text-embedding-3-small","usage":{"prompt_tokens":1000,"total_tokens":1000}}
+                                """)));
+
+        webTestClient.post()
+                .uri("/v1/embeddings")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token("acmekey"))
+                .header("X-Request-Id", "req-embed")
+                .bodyValue("{\"model\":\"embed\",\"input\":\"mail ada@example.com\"}")
+                .exchange()
+                .expectStatus().isOk()
+                .expectHeader().valueEquals("X-Request-Id", "req-embed")
+                .expectBody()
+                .jsonPath("$.object").isEqualTo("list")
+                .jsonPath("$.model").isEqualTo("embed")
+                .jsonPath("$.data[0].embedding[0]").isEqualTo(0.1);
+
+        String upstream = WIRE_MOCK.getAllServeEvents().get(0).getRequest().getBodyAsString();
+        assertThat(upstream).contains("[EMAIL_1]").doesNotContain("ada@example.com");
+
+        Map<String, Object> row = awaitLedger("req-embed");
+        assertThat(row.get("tenant_id")).isEqualTo("acme");
+        assertThat(row.get("route")).isEqualTo("embeddings");
+        assertThat(row.get("provider")).isEqualTo("openai");
+        assertThat(row.get("model")).isEqualTo("text-embedding-3-small");
+        assertThat(((Number) row.get("prompt_tokens")).intValue()).isEqualTo(1000);
+        assertThat(row.get("cache")).isEqualTo("none");
+        assertThat(((Number) row.get("status")).intValue()).isEqualTo(200);
+        assertThat(((Number) row.get("est_cost_micros")).longValue()).isEqualTo(20L);
+
+        webTestClient.post()
+                .uri("/v1/embeddings")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token("embedlimitkey"))
+                .header("X-Request-Id", "req-embed-1")
+                .bodyValue("{\"model\":\"embed\",\"input\":\"one\"}")
+                .exchange()
+                .expectStatus().isOk();
+        webTestClient.post()
+                .uri("/v1/embeddings")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token("embedlimitkey"))
+                .header("X-Request-Id", "req-embed-2")
+                .bodyValue("{\"model\":\"embed\",\"input\":\"two\"}")
+                .exchange()
+                .expectStatus().isEqualTo(429)
+                .expectHeader().exists("Retry-After")
+                .expectBody()
+                .jsonPath("$.error.code").isEqualTo("rate_limit_exceeded");
+    }
+
     private WebTestClient.ResponseSpec chat(String presented, String body, String requestId) {
         WebTestClient.RequestBodySpec spec = webTestClient.post()
                 .uri("/v1/chat/completions")
@@ -493,7 +560,8 @@ class TenancyLedgerIT {
                 new TenantSpec("revokedco", "revokedkey", "active", 100, 100, "", "", ""),
                 new TenantSpec("stream", "streamkey", "active", 1000, 1000, "", "", ""),
                 new TenantSpec("reconcile", "reconcilekey", "active", 1000, 1000, "", "", ""),
-                new TenantSpec("noprice", "nopricekey", "active", 1000, 1000, "", "", ""));
+                new TenantSpec("noprice", "nopricekey", "active", 1000, 1000, "", "", ""),
+                new TenantSpec("embedlimit", "embedlimitkey", "active", 1, 0.001, "", "", ""));
         for (int i = 0; i < tenants.size(); i++) {
             TenantSpec tenant = tenants.get(i);
             String prefix = "gateway.tenancy.bootstrap[" + i + "]";

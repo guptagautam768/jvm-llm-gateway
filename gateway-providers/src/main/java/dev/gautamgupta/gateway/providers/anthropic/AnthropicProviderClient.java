@@ -28,8 +28,8 @@ import reactor.core.publisher.Mono;
  * Anthropic Messages adapter.
  *
  * <p>The gateway edge speaks OpenAI chat completions. This client translates that
- * shape to the Anthropic Messages API and back, including SSE. ADR-0013 (Proposed)
- * records why this is a WebClient adapter rather than Spring AI.
+ * shape to the Anthropic Messages API and back, including SSE. ADR-0013 records why
+ * this is a WebClient adapter rather than Spring AI. Anthropic does not embed.
  */
 public final class AnthropicProviderClient implements ProviderClient {
 

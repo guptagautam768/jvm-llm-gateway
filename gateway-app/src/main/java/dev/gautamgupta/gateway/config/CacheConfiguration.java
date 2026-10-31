@@ -9,7 +9,7 @@ import dev.gautamgupta.gateway.cache.ResponseCache;
 import dev.gautamgupta.gateway.core.routing.ModelRouter;
 import dev.gautamgupta.gateway.guardrails.PromptRedactor;
 import dev.gautamgupta.gateway.guardrails.RequestSizeLimit;
-import dev.gautamgupta.gateway.providers.openai.OpenAiProviderClient;
+import dev.gautamgupta.gateway.core.provider.ProviderRegistry;
 import dev.gautamgupta.gateway.metrics.GatewayMetrics;
 import dev.gautamgupta.gateway.web.ChatCacheService;
 import io.micrometer.observation.ObservationRegistry;
@@ -65,13 +65,13 @@ public class CacheConfiguration {
 
         @Bean
         EmbeddingClient embeddingClient(
-                OpenAiProviderClient openAi,
+                ProviderRegistry providers,
                 ObjectMapper objectMapper,
                 CacheProperties properties
         ) {
             CacheProperties.Semantic semantic = properties.getSemantic();
-            return new OpenAiEmbeddingClient(
-                    openAi,
+            return new RoutingEmbeddingClient(
+                    providers,
                     objectMapper,
                     semantic.getEmbeddingProvider(),
                     semantic.getEmbeddingModel(),

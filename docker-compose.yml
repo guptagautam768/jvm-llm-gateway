@@ -1,6 +1,7 @@
 # Local dependencies for jvm-llm-gateway.
-# Chat auth, rate limits, budgets, and the usage ledger use Postgres and Redis.
-# Ollama is present for a later provider and is not on the chat path.
+# Chat auth, rate limits, budgets, the usage ledger, and the response cache use Postgres and Redis.
+# Ollama is the local provider. Default routes still prefer OpenAI and Anthropic.
+# For a run with no paid keys, use docker-compose.ollama.yml (see the README).
 name: jvm-llm-gateway
 
 services:
@@ -53,6 +54,8 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
       SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/gateway
       SPRING_R2DBC_USERNAME: gateway
       SPRING_R2DBC_PASSWORD: gateway
