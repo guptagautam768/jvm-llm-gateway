@@ -4,7 +4,7 @@
 [![Java](https://img.shields.io/badge/Java-21-orange.svg)](https://openjdk.org/projects/jdk/21/)
 [![CI](https://github.com/guptagautam768/jvm-llm-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/guptagautam768/jvm-llm-gateway/actions/workflows/ci.yml)
 
-OpenAI-compatible LLM gateway for the JVM. Application teams point an OpenAI SDK at one base URL. The gateway owns provider access, routing, resilience, caller tenancy, and a usage ledger. Caching and guardrails come later.
+OpenAI-compatible LLM gateway for the JVM. Application teams point an OpenAI SDK at one base URL. The gateway owns provider access, routing, resilience, caller tenancy, a usage ledger, and response caching. PII redaction comes later.
 
 This is a portfolio project for Gautam Gupta. It is platform infrastructure, not a RAG or agent product.
 
@@ -39,7 +39,7 @@ Shipped:
 - Anthropic chat, including SSE, behind the same `ProviderClient` port. The edge stays OpenAI-shaped. The API key is `ANTHROPIC_API_KEY`. See [ADR-0013](docs/adr/0013-anthropic-adapter-direct-webclient.md) for why this adapter is WebClient rather than Spring AI.
 - `GET /v1/models` lists configured aliases, then the concrete models on those routes. It does not call a provider.
 
-Caller API keys, budgets, and the usage ledger shipped in week 3. Still later: Ollama (FR-012), `POST /v1/embeddings` (FR-002), Redis cache, and PII redaction.
+Caller API keys, budgets, and the usage ledger shipped in week 3. Response caching shipped in week 4. Still later: Ollama (FR-012), `POST /v1/embeddings` (FR-002), and PII redaction.
 
 The route timeout is the deadline for one target, including its retries. The next target gets its own deadline. Worst case for an alias is about `targets × timeout` when every target hangs. `fast` in the shipped file is two targets and 30s, so a fully hung route is about 60s before **504**. A 4xx fails immediately.
 
@@ -57,10 +57,50 @@ Shipped:
 - Redis Lua token bucket `rl:{tenant}` with `Retry-After` and `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`. An optional tokens-per-minute bucket is `rl:{tenant}:tpm` when `tokens-per-minute` is set.
 - Token and cost budgets in Redis at `budget:{tenant}:{windowStart}`. Pre-flight estimates prompt characters (about 4 per token) plus `max_tokens` / `max_completion_tokens` (or `gateway.tenancy.default-completion-tokens`). After the provider returns, the counter is replaced by actual usage. A stream that omits usage is charged the estimate. Concurrent requests can overshoot by a little; that is the ADR-0007 trade-off.
 - Errors: **401** `invalid_api_key`, **403** `tenant_disabled`, **429** `rate_limit_exceeded` | `token_budget_exceeded` | `cost_budget_exceeded`. Redis or Postgres failures on this path are **503** `dependency_unavailable` (fail-closed, the policy ADR-0007 proposed).
-- `usage_ledger` is range-partitioned by day. Writes are async. A failed write is logged and counted on `gateway.ledger.writes` and is not returned to the client. Rows have no prompt or completion text. `cache` is `none` until week 4.
+- `usage_ledger` is range-partitioned by day. Writes are async. A failed write is logged and counted on `gateway.ledger.writes` and is not returned to the client. Rows have no prompt or completion text. `cache` is `none`, `exact`, or `semantic` (week 4).
 - Estimated cost comes from `gateway.prices` (USD per 1K tokens). A missing model stores `est_cost_micros` null and increments `gateway.price.missing`.
 - ShedLock (R2DBC, so JDBC stays on Flyway) runs `gateway.ledger.retention` (default 30 days): drop older daily partitions and pre-create upcoming ones.
 - Metrics: `gateway.ratelimit.rejections` (`reason`), `gateway.tokens`, `gateway.cost.estimated`, `gateway.price.missing`. The `tenant` tag is off unless `gateway.tenancy.metrics-tenant-tag=true`.
+
+## Week 4 status
+
+Milestone: **exact and semantic response cache**.
+
+Shipped, on the one Redis Stack instance from Compose (ADR-0006):
+
+- Exact cache for non-streaming chat. The key is `cache:x:{tenant}:{sha256}` of canonical JSON: the route, the resolved primary provider and model, the messages, and the generation fields that change the completion (`temperature`, `max_tokens`, `max_completion_tokens`, `top_p`, penalties, `stop`, `seed`, tools, `response_format`, and the other modeled sampling fields). `user` and `stream` are not part of the key. A different tenant never hits.
+- Semantic cache after an exact miss. The gateway embeds the final user message with OpenAI `text-embedding-3-small` (1536 dimensions by default) through the same WebClient adapter. `POST /v1/embeddings` is still not a public route. Ollama embeddings stay week 6. RediSearch HNSW uses cosine distance and TAG filters `tenant`, `model`, and `context`. `context` is the hash of that same document with the final user text removed, so a similar question under a different system prompt or sampling settings does not hit.
+- A semantic hit requires cosine similarity of at least `gateway.cache.semantic.threshold` (default **0.92**) and `temperature` of at most `gateway.cache.semantic.max-temperature` (default **0.2**). An omitted temperature counts as 1.0 for that gate only, which is OpenAI's default, so those calls skip the semantic cache. Exact cache still applies. 0.92 is the cosine of about 23°: a 15° near-duplicate (about 0.966) hits and a 30° related prompt (about 0.866) misses. CI stubs vectors on both sides of the line. This is a correctness default, not a measured hit rate against live OpenAI embeddings. Tune it per alias with `gateway.routes.<alias>.cache.threshold`, or set `semantic: false` on a sensitive alias. A concrete model name inherits the cache settings of the alias whose primary target is that model.
+- TTL defaults to 10 minutes from write time, in whole seconds, and is not refreshed on read. Each cache also keeps at most `max-entries` (default 10000) and drops the least recently used entry via a sorted set. Compose still sets Redis `maxmemory` 256mb and `allkeys-lru`. That policy can evict `rl:` and `budget:` keys; the application cap is what the tests enforce. The semantic index is `gateway:cache:semantic`. Changing `dimensions` needs `FT.DROPINDEX gateway:cache:semantic` before restart.
+- `X-Cache-Bypass: true` (only that value, case-insensitive) skips lookup and write. `stream: true` is not cached (ADR-0006). The response header `X-Cache` is `exact`, `semantic`, `miss`, `bypass`, or `skip`.
+- A hit still needs a valid caller key, the request bucket, the tokens-per-minute bucket, and the pre-flight budget check. The ledger row stores the served tokens, `est_cost_micros`, and `cache=exact|semantic`. Redis token and dollar budgets do **not** increase on a hit: those counters are provider spend. `gateway.cost.estimated` follows that rule. `gateway.tokens` includes hits. `gateway.cache` records `result` (`hit` or `miss`) and `type` (`exact` or `semantic`). Embedding tokens are not added to the tenant budget.
+- A Redis or embedding failure on this path is a miss. The chat call continues. Rate-limit Redis failures stay **503**.
+- Week 5 hook, already in the pipeline: request size check (no-op), then `PromptRedactor` (no-op), then cache, then the provider. Cache keys and embeddings use the redactor's output. The cached body is the provider response; responses are not scanned.
+
+```bash
+# Second identical call: X-Cache: exact, and the provider is not called.
+curl -sD - http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer lgw_${GATEWAY_BOOTSTRAP_KEY_ID}_${GATEWAY_BOOTSTRAP_KEY_SECRET}" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"gpt-4o-mini","temperature":0,"messages":[{"role":"user","content":"Say hello in one sentence."}]}'
+
+# Force the provider.
+curl -sD - http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer lgw_${GATEWAY_BOOTSTRAP_KEY_ID}_${GATEWAY_BOOTSTRAP_KEY_SECRET}" \
+  -H 'X-Cache-Bypass: true' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"gpt-4o-mini","temperature":0,"messages":[{"role":"user","content":"Say hello in one sentence."}]}'
+```
+
+Turn semantic cache off for one alias:
+
+```yaml
+gateway:
+  routes:
+    smart:
+      cache:
+        semantic: false
+```
 
 ## Architecture
 
@@ -91,7 +131,7 @@ flowchart LR
   ollama -.-> app
 ```
 
-Solid arrows are the chat path: auth and limits hit Redis, tenant lookup and the ledger hit Postgres. Ollama is in Compose only. The management port is separate from the API.
+Solid arrows are the chat path. Auth, limits, budgets, and the response cache use Redis. Tenant lookup and the ledger use Postgres. A non-streaming miss consults the exact key, then the semantic index, then the provider. Ollama is in Compose only. The management port is separate from the API.
 
 Module layout (ADR-0002):
 
@@ -101,7 +141,7 @@ Module layout (ADR-0002):
 | `gateway-api` | OpenAI wire DTOs and the error body |
 | `gateway-core` | `ProviderClient` port, registry, alias router, Resilience4j guard. No web types |
 | `gateway-providers` | OpenAI and Anthropic adapters |
-| `gateway-cache` | Placeholder for ADR-0006 |
+| `gateway-cache` | Exact and semantic response cache on Redis Stack (ADR-0006) |
 | `gateway-tenancy` | API key hash and parse, Redis token bucket, budget counters, price math |
 | `gateway-persistence` | Flyway schema, R2DBC tenant lookup, async ledger, partition retention |
 | `gateway-guardrails` | Placeholder for ADR-0009 |
@@ -218,7 +258,7 @@ Logs are JSON in Elastic Common Schema and do not include prompt text. Shutdown 
 ./gradlew build
 ```
 
-WireMock stands in for OpenAI and Anthropic. `TenancyLedgerIT` uses Testcontainers (`postgres:16` and `redis/redis-stack-server`, the same image as Compose) for AC-009 and AC-012: unknown keys, a disabled tenant, the rate-limit and budget 429s, ledger rows, budget reconcile, streaming usage, a missing price, and the retention job. `./gradlew build` also writes per-module JaCoCo reports and an aggregate at `build/reports/jacoco/jacocoRootReport/`. There is no coverage gate yet; ADR-0011 sets that after a baseline.
+WireMock stands in for OpenAI and Anthropic. `TenancyLedgerIT` uses Testcontainers (`postgres:16` and `redis/redis-stack-server`, the same image as Compose) for AC-009 and AC-012. `ResponseCacheIT` uses the same images for AC-006, AC-007, and AC-008: exact hit, semantic hit and miss around the 0.92 threshold, `X-Cache-Bypass`, tenant isolation, TTL, the temperature gate, streaming, and budget accounting on a hit. `RedisResponseCacheIT` covers the sorted-set caps and TTL against Redis Stack directly. `./gradlew build` also writes per-module JaCoCo reports and an aggregate at `build/reports/jacoco/jacocoRootReport/`. There is no coverage gate yet; ADR-0011 sets that after a baseline.
 
 ## Wire format
 
@@ -232,7 +272,7 @@ Unknown JSON fields are ignored and are not forwarded (FR-001, the "ignore" opti
 |---|---|---|
 | 2 | Routing and resilience | **Done:** YAML aliases, ordered fallback, Resilience4j retry / circuit breaker / time limiter (ADR-0005), Anthropic chat and SSE. **Still open:** Ollama (FR-012) and `POST /v1/embeddings` (FR-002). |
 | 3 | Tenancy and limits | **Done:** hashed API keys, Postgres tenants, Redis token bucket, token and dollar budgets, 429 contract (ADR-0007). Daily usage ledger and 30-day partition retention (ADR-0008). |
-| 4 | Semantic cache | Redis exact-match and vector cache, TTL plus a size bound, `X-Cache-Bypass` (ADR-0006). |
+| 4 | Semantic cache | **Done:** Redis exact-match and vector cache, TTL plus a size bound, `X-Cache-Bypass` (ADR-0006). **Still open:** Ollama embeddings and the public `POST /v1/embeddings` route. |
 | 5 | Guardrails and observability | PII redact-and-forward (ADR-0009), request size limits, the remaining Micrometer series, OpenTelemetry traces, Grafana dashboard (ADR-0010). |
 | 6 | Polish | OpenAI Java SDK contract test, JaCoCo baseline gate, load-test notes, demo script. Testcontainers for limits and the ledger already run in week 3. |
 

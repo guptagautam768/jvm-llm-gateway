@@ -13,10 +13,24 @@ public record ResolvedRoute(
         List<RouteTarget> targets,
         Duration timeout,
         RetrySettings retry,
-        boolean alias
+        boolean alias,
+        RouteCacheSettings cacheSettings
 ) {
+
+    public ResolvedRoute(
+            String requestedModel,
+            List<RouteTarget> targets,
+            Duration timeout,
+            RetrySettings retry,
+            boolean alias
+    ) {
+        this(requestedModel, targets, timeout, retry, alias, RouteCacheSettings.inherit());
+    }
 
     public ResolvedRoute {
         targets = List.copyOf(targets);
+        if (cacheSettings == null) {
+            cacheSettings = RouteCacheSettings.inherit();
+        }
     }
 }

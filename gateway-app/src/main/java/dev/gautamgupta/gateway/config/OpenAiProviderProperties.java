@@ -16,6 +16,7 @@ public class OpenAiProviderProperties {
     private String apiKey = "";
     private String completionsPath = "/v1/chat/completions";
     private String modelsPath = "/v1/models";
+    private String embeddingsPath = "/v1/embeddings";
     private Duration connectTimeout = Duration.ofSeconds(5);
     private Duration responseTimeout = Duration.ofSeconds(60);
     private int maxInMemoryBytes = 2 * 1024 * 1024;
@@ -50,6 +51,14 @@ public class OpenAiProviderProperties {
 
     public void setModelsPath(String modelsPath) {
         this.modelsPath = modelsPath;
+    }
+
+    public String getEmbeddingsPath() {
+        return embeddingsPath;
+    }
+
+    public void setEmbeddingsPath(String embeddingsPath) {
+        this.embeddingsPath = embeddingsPath;
     }
 
     public Duration getConnectTimeout() {
@@ -89,6 +98,6 @@ public class OpenAiProviderProperties {
     }
 
     public OpenAiClientSettings toSettings() {
-        return new OpenAiClientSettings(apiKey, completionsPath, modelsPath);
+        return new OpenAiClientSettings(apiKey, completionsPath, modelsPath, embeddingsPath);
     }
 }

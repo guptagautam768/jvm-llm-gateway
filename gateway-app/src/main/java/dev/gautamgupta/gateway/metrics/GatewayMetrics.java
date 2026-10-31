@@ -73,6 +73,20 @@ public class GatewayMetrics {
         missing.register(meterRegistry).increment();
     }
 
+    /** A served response that did not call a provider. The provider latency timer stays unchanged. */
+    public void recordCacheHit(String route, String provider, String model, Usage usage, String tenantId) {
+        requestCounter(route, modelTag(provider), modelTag(model), "200", tenantId).increment();
+        recordTokens(modelTag(provider), modelTag(model), usage, tenantId);
+    }
+
+    public void recordCache(String result, String type) {
+        Counter.builder("gateway.cache")
+                .description("Exact and semantic cache lookups")
+                .tags("result", result, "type", type)
+                .register(meterRegistry)
+                .increment();
+    }
+
     public void recordLedgerWrite(boolean success) {
         Counter.builder("gateway.ledger.writes")
                 .description("Async usage ledger writes")

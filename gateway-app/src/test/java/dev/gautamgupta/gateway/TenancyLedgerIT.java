@@ -63,6 +63,7 @@ import org.testcontainers.utility.DockerImageName;
                 "gateway.prices.gpt-4o-mini.completion-per-1k-usd=0.008",
                 "gateway.routes.gap.targets[0].provider=openai",
                 "gateway.routes.gap.targets[0].model=gpt-test-unpriced",
+                "gateway.cache.enabled=false",
                 "gateway.providers.openai.response-timeout=5s",
                 "gateway.providers.anthropic.response-timeout=5s"
         }

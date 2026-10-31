@@ -6,6 +6,9 @@ import dev.gautamgupta.gateway.api.Usage;
 import dev.gautamgupta.gateway.api.chat.ChatCompletionChunk;
 import dev.gautamgupta.gateway.api.chat.ChatCompletionRequest;
 import dev.gautamgupta.gateway.api.chat.ChatCompletionResponse;
+import dev.gautamgupta.gateway.cache.CacheBypass;
+import dev.gautamgupta.gateway.cache.CacheObservation;
+import dev.gautamgupta.gateway.cache.CachedCompletion;
 import dev.gautamgupta.gateway.core.chat.AttemptTrace;
 import dev.gautamgupta.gateway.core.chat.ChatCompletionService;
 import dev.gautamgupta.gateway.core.provider.ProviderException;
@@ -34,22 +37,26 @@ public class ChatCompletionsController {
 
     private static final Logger log = LoggerFactory.getLogger(ChatCompletionsController.class);
     private static final String ROUTE = "chat.completions";
+    public static final String CACHE_HEADER = "X-Cache";
 
     private final ChatCompletionService service;
     private final ObjectMapper objectMapper;
     private final GatewayMetrics metrics;
     private final ChatTenancy tenancy;
+    private final ChatCacheService cache;
 
     public ChatCompletionsController(
             ChatCompletionService service,
             ObjectMapper objectMapper,
             GatewayMetrics metrics,
-            ChatTenancy tenancy
+            ChatTenancy tenancy,
+            ChatCacheService cache
     ) {
         this.service = service;
         this.objectMapper = objectMapper;
         this.metrics = metrics;
         this.tenancy = tenancy;
+        this.cache = cache;
     }
 
     @PostMapping(path = "/v1/chat/completions", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -57,6 +64,9 @@ public class ChatCompletionsController {
         service.validate(request);
         boolean stream = Boolean.TRUE.equals(request.stream());
         log.info("chat completions model={} stream={}", request.model(), stream);
+        // Auth and the request bucket already ran. Pre-flight budget is next, then
+        // size limit → redaction → cache → provider (ADR-0009). Size limit and
+        // redaction are no-ops until week 5. stream=true does not read or write the cache.
         ServerHttpResponse response = exchange.getResponse();
         if (stream) {
             response.getHeaders().setContentType(MediaType.TEXT_EVENT_STREAM);
@@ -64,24 +74,59 @@ public class ChatCompletionsController {
             response.getHeaders().add("X-Accel-Buffering", "no");
             return tenancy.preflight(exchange, request)
                     .then(Mono.fromRunnable(() -> applyRateHeaders(exchange)))
-                    .thenMany(stream(request, exchange));
+                    .thenMany(Flux.defer(() -> cachedStream(request, exchange)));
         }
         response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
         return tenancy.preflight(exchange, request)
                 .then(Mono.fromRunnable(() -> applyRateHeaders(exchange)))
-                .then(complete(request, exchange));
+                .then(Mono.defer(() -> cachedComplete(request, exchange)));
     }
 
-    private Mono<ChatCompletionResponse> complete(ChatCompletionRequest request, ServerWebExchange exchange) {
+    private Flux<ServerSentEvent<String>> cachedStream(ChatCompletionRequest request, ServerWebExchange exchange) {
+        return cache.lookup(tenancy.tenantId(exchange), request, CacheMode.STREAM)
+                .flatMapMany(decision -> {
+                    applyCacheHeader(exchange, decision);
+                    return stream(decision.redacted(), exchange);
+                });
+    }
+
+    private Mono<ChatCompletionResponse> cachedComplete(ChatCompletionRequest request, ServerWebExchange exchange) {
         long start = System.nanoTime();
         AttemptTrace trace = new AttemptTrace();
-        return service.complete(request, trace)
-                .flatMap(body -> tenancy.reconcile(exchange, trace.model(), body.usage()).thenReturn(body))
-                .doOnNext(body -> {
-                    metrics.recordSuccess(ROUTE, trace.providerId(), trace.model(), body.usage(), start, tenancy.tenantId(exchange));
-                    tenancy.record(exchange, ROUTE, trace.providerId(), trace.model(), body.usage(), 200, null, start);
-                })
-                .onErrorResume(error -> finishError(exchange, trace, error, start).then(Mono.error(error)));
+        CacheMode mode = CacheBypass.requested(exchange.getRequest().getHeaders().getFirst(CacheBypass.HEADER))
+                ? CacheMode.BYPASS
+                : CacheMode.USE;
+        return cache.lookup(tenancy.tenantId(exchange), request, mode)
+                .flatMap(decision -> {
+                    applyCacheHeader(exchange, decision);
+                    recordLookups(decision);
+                    if (decision.hit() != null) {
+                        CachedCompletion cached = decision.hit();
+                        exchange.getAttributes().put(TenancyExchange.CACHE, decision.hitType());
+                        exchange.getAttributes().put(TenancyExchange.CACHE_HIT, Boolean.TRUE);
+                        return tenancy.reconcile(exchange, cached.model(), cached.response().usage())
+                                .thenReturn(cached.response())
+                                .doOnNext(body -> {
+                                    metrics.recordCacheHit(
+                                            ROUTE, cached.provider(), cached.model(), body.usage(), tenancy.tenantId(exchange));
+                                    tenancy.record(
+                                            exchange, ROUTE, cached.provider(), cached.model(), body.usage(), 200, null, start);
+                                });
+                    }
+                    exchange.getAttributes().put(TenancyExchange.CACHE, "none");
+                    return service.complete(decision.redacted(), trace)
+                            .flatMap(body -> cache.store(
+                                            decision, new CachedCompletion(trace.providerId(), trace.model(), body))
+                                    .then(tenancy.reconcile(exchange, trace.model(), body.usage()))
+                                    .thenReturn(body))
+                            .doOnNext(body -> {
+                                metrics.recordSuccess(
+                                        ROUTE, trace.providerId(), trace.model(), body.usage(), start, tenancy.tenantId(exchange));
+                                tenancy.record(
+                                        exchange, ROUTE, trace.providerId(), trace.model(), body.usage(), 200, null, start);
+                            })
+                            .onErrorResume(error -> finishError(exchange, trace, error, start).then(Mono.error(error)));
+                });
     }
 
     private Flux<ServerSentEvent<String>> stream(ChatCompletionRequest request, ServerWebExchange exchange) {
@@ -125,6 +170,18 @@ public class ChatCompletionsController {
         Outcome outcome = outcome(error);
         tenancy.record(exchange, ROUTE, trace.providerId(), trace.model(), null, outcome.status(), outcome.code(), start);
         return tenancy.reconcile(exchange, trace.model(), null);
+    }
+
+    private void recordLookups(CacheDecision decision) {
+        for (CacheObservation observation : decision.observations()) {
+            metrics.recordCache(observation.result(), observation.type());
+        }
+    }
+
+    private static void applyCacheHeader(ServerWebExchange exchange, CacheDecision decision) {
+        if (decision.header() != null) {
+            exchange.getResponse().getHeaders().set(CACHE_HEADER, decision.header());
+        }
     }
 
     private static void applyRateHeaders(ServerWebExchange exchange) {

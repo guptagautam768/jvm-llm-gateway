@@ -23,7 +23,7 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = OfflineDataStores.EXCLUDE
+        properties = {OfflineDataStores.EXCLUDE, OfflineDataStores.CACHE_OFF}
 )
 class ChatPassthroughTest {
 

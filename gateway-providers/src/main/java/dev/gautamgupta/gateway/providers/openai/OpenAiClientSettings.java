@@ -4,7 +4,16 @@ package dev.gautamgupta.gateway.providers.openai;
  * Connection details the OpenAI adapter needs. The base URL and timeouts live on the
  * {@code WebClient} so this type stays free of HTTP client classes.
  */
-public record OpenAiClientSettings(String apiKey, String completionsPath, String modelsPath) {
+public record OpenAiClientSettings(
+        String apiKey,
+        String completionsPath,
+        String modelsPath,
+        String embeddingsPath
+) {
+
+    public OpenAiClientSettings(String apiKey, String completionsPath, String modelsPath) {
+        this(apiKey, completionsPath, modelsPath, "/v1/embeddings");
+    }
 
     public OpenAiClientSettings {
         apiKey = apiKey == null ? "" : stripBearer(apiKey.trim());
@@ -13,6 +22,9 @@ public record OpenAiClientSettings(String apiKey, String completionsPath, String
         }
         if (modelsPath == null || modelsPath.isBlank()) {
             modelsPath = "/v1/models";
+        }
+        if (embeddingsPath == null || embeddingsPath.isBlank()) {
+            embeddingsPath = "/v1/embeddings";
         }
     }
 

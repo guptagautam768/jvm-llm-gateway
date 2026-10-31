@@ -96,6 +96,7 @@ gateway:
       base-url: ${OPENAI_BASE_URL:https://api.openai.com}
       api-key: ${OPENAI_API_KEY:}
       completions-path: /v1/chat/completions
+      embeddings-path: /v1/embeddings
       models-path: /v1/models
       connect-timeout: 5s
       response-timeout: 60s
@@ -150,6 +151,22 @@ gateway:
     claude-sonnet-4-5:
       prompt-per-1k-usd: "0.00300"
       completion-per-1k-usd: "0.01500"
+  # Exact and semantic response cache (ADR-0006). One Redis Stack instance, shared
+  # with rate limits. Streaming is not cached. See the README for the threshold.
+  cache:
+    enabled: true
+    exact:
+      ttl: 10m
+      max-entries: 10000
+    semantic:
+      enabled: true
+      ttl: 10m
+      max-entries: 10000
+      threshold: 0.92
+      max-temperature: 0.2
+      dimensions: 1536
+      embedding-provider: openai
+      embedding-model: text-embedding-3-small
 
 info:
   app:

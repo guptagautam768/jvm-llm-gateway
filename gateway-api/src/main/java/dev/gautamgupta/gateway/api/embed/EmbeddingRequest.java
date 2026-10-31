@@ -9,5 +9,9 @@ import com.fasterxml.jackson.databind.JsonNode;
  * without changing the port.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
-public record EmbeddingRequest(String model, JsonNode input) {
+public record EmbeddingRequest(String model, JsonNode input, Integer dimensions) {
+
+    public EmbeddingRequest(String model, JsonNode input) {
+        this(model, input, null);
+    }
 }

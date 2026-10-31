@@ -37,6 +37,13 @@ class GatewayMetricsTest {
     void ledgerWriteResultsAreSeparateSeries() {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         GatewayMetrics metrics = new GatewayMetrics(registry, false);
+        metrics.recordCache("hit", "exact");
+        metrics.recordCache("miss", "semantic");
+        metrics.recordCacheHit("chat.completions", "openai", "gpt-4o-mini", new Usage(5, 7, 12), null);
+        assertThat(registry.get("gateway.cache").tag("result", "hit").tag("type", "exact").counter().count()).isEqualTo(1);
+        assertThat(registry.get("gateway.cache").tag("result", "miss").tag("type", "semantic").counter().count()).isEqualTo(1);
+        assertThat(registry.get("gateway.requests").tag("status", "200").counter().count()).isEqualTo(1);
+        assertThat(registry.find("gateway.provider.latency").timers()).isEmpty();
         metrics.recordLedgerWrite(true);
         metrics.recordLedgerWrite(false);
         assertThat(registry.get("gateway.ledger.writes").tag("result", "success").counter().count()).isEqualTo(1);
