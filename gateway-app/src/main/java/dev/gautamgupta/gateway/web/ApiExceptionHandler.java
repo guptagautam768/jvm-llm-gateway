@@ -108,10 +108,23 @@ public class ApiExceptionHandler {
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(ApiErrorResponse.of("Not found.", "invalid_request_error", "not_found", null));
         }
+        if (code.value() == HttpStatus.METHOD_NOT_ALLOWED.value()) {
+            return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(ApiErrorResponse.of(
+                            "Method not allowed.", "invalid_request_error", "method_not_allowed", null));
+        }
+        if (code.value() == HttpStatus.UNSUPPORTED_MEDIA_TYPE.value()) {
+            return ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(ApiErrorResponse.of(
+                            "Unsupported media type.", "invalid_request_error", "unsupported_media_type", null));
+        }
         log.warn("request failed status={} ({})", code.value(), ex.getClass().getSimpleName());
+        String type = code.is4xxClientError() ? "invalid_request_error" : "server_error";
         return ResponseEntity.status(code)
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(ApiErrorResponse.of("Request failed.", "server_error", "request_failed", null));
+                .body(ApiErrorResponse.of("Request failed.", type, "request_failed", null));
     }
 
     @ExceptionHandler({ServerWebInputException.class, DecodingException.class})
@@ -172,8 +185,7 @@ public class ApiExceptionHandler {
 
     private static String publicMessage(ProviderException ex) {
         return switch (ex.kind()) {
-            case NOT_CONFIGURED -> "The " + ex.providerId() + " provider is not configured. Set "
-                    + apiKeyVariable(ex.providerId()) + ".";
+            case NOT_CONFIGURED -> notConfiguredMessage(ex.providerId());
             case TIMEOUT -> "The provider timed out.";
             case UNAVAILABLE -> "The provider could not be reached.";
             case MALFORMED -> "The provider returned a response the gateway could not read.";
@@ -195,12 +207,16 @@ public class ApiExceptionHandler {
         };
     }
 
-    private static String apiKeyVariable(String providerId) {
-        return switch (providerId) {
+    private static String notConfiguredMessage(String providerId) {
+        if ("ollama".equals(providerId)) {
+            return "The ollama provider is not configured. Set OLLAMA_BASE_URL.";
+        }
+        String variable = switch (providerId) {
             case "openai" -> "OPENAI_API_KEY";
             case "anthropic" -> "ANTHROPIC_API_KEY";
             default -> providerId.toUpperCase(Locale.ROOT) + "_API_KEY";
         };
+        return "The " + providerId + " provider is not configured. Set " + variable + ".";
     }
 
     private static String typeOf(ProviderException ex) {

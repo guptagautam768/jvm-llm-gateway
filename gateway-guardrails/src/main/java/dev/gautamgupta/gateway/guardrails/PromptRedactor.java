@@ -2,6 +2,8 @@ package dev.gautamgupta.gateway.guardrails;
 
 import dev.gautamgupta.gateway.api.chat.ChatCompletionRequest;
 import dev.gautamgupta.gateway.guardrails.pii.RedactionResult;
+import dev.gautamgupta.gateway.guardrails.pii.TextRedaction;
+import java.util.List;
 
 /**
  * Redacts message content before the cache key, the embedding, and the provider body
@@ -21,5 +23,13 @@ public interface PromptRedactor {
      */
     default RedactionResult apply(ChatCompletionRequest request, String tenantId) {
         return RedactionResult.unchanged(redact(request));
+    }
+
+    /**
+     * Redact embeddings input. The default leaves the text unchanged, which is what
+     * test doubles that only implement {@link #redact(ChatCompletionRequest)} do.
+     */
+    default TextRedaction applyTexts(List<String> texts, String tenantId) {
+        return TextRedaction.unchanged(texts);
     }
 }

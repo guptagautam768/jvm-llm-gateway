@@ -43,7 +43,7 @@ import reactor.core.publisher.Mono;
 public final class ActiveChatTenancy implements ChatTenancy {
 
     private static final Logger log = LoggerFactory.getLogger(ActiveChatTenancy.class);
-    private static final String ROUTE = "chat.completions";
+    private static final String CHAT_ROUTE = "chat.completions";
 
     private final RequestLimiter limiter;
     private final BudgetCounter budgets;
@@ -73,15 +73,26 @@ public final class ActiveChatTenancy implements ChatTenancy {
 
     @Override
     public Mono<Void> preflight(ServerWebExchange exchange, ChatCompletionRequest request) {
+        return preflight(exchange, CHAT_ROUTE, request.model(), estimator.estimate(request));
+    }
+
+    @Override
+    public Mono<Void> preflight(
+            ServerWebExchange exchange,
+            String routeName,
+            String requestedModel,
+            UsageEstimate estimate
+    ) {
         ApiKeyRecord principal = principal(exchange);
         if (principal == null) {
             return Mono.error(TenancyException.invalidApiKey());
         }
-        UsageEstimate estimate = estimator.estimate(request);
+        exchange.getAttributes().put(TenancyExchange.ROUTE, routeName == null || routeName.isBlank() ? CHAT_ROUTE : routeName);
         exchange.getAttributes().put(TenancyExchange.ESTIMATE, estimate);
-        ResolvedRoute route = router.resolve(request.model());
+        ResolvedRoute route = router.resolve(requestedModel);
+        String provider = route.targets().get(0).provider();
         String priceModel = route.targets().get(0).model();
-        Optional<ModelPrice> price = prices.find(priceModel);
+        Optional<ModelPrice> price = prices.find(provider, priceModel);
         boolean enforceCost = price.isPresent() && principal.limits().hasCostBudget();
         long estimatedCost = enforceCost
                 ? price.get().micros(estimate.promptTokens(), estimate.completionTokens())
@@ -94,12 +105,12 @@ public final class ActiveChatTenancy implements ChatTenancy {
                 OffsetDateTime.now(ZoneOffset.UTC).toInstant(),
                 principal.limits().budgetWindow());
         exchange.getAttributes().put(TenancyExchange.BUDGET_KEY, budgetKey);
-        return tokensPerMinute(exchange, principal, estimate, request.model())
+        return tokensPerMinute(exchange, principal, estimate, requestedModel)
                 .then(Mono.defer(() -> budgetCheck(exchange, principal, estimate, enforceCost, estimatedCost, priceModel)));
     }
 
     @Override
-    public Mono<Void> reconcile(ServerWebExchange exchange, String servedModel, Usage usage) {
+    public Mono<Void> reconcile(ServerWebExchange exchange, String provider, String servedModel, Usage usage) {
         if (Boolean.TRUE.equals(exchange.getAttribute(TenancyExchange.CACHE_HIT))) {
             return Mono.empty();
         }
@@ -112,7 +123,7 @@ public final class ActiveChatTenancy implements ChatTenancy {
             return Mono.empty();
         }
         String model = priceModel(servedModel, exchange);
-        long cost = prices.costMicros(model, tokens[0], tokens[1]).orElse(0L);
+        long cost = prices.costMicros(provider, model, tokens[0], tokens[1]).orElse(0L);
         String key = exchange.getAttribute(TenancyExchange.BUDGET_KEY);
         if (key == null) {
             key = BudgetWindow.redisKey(
@@ -156,7 +167,7 @@ public final class ActiveChatTenancy implements ChatTenancy {
         if (prompt != null || completion != null) {
             int promptTokens = prompt == null ? 0 : prompt;
             int completionTokens = completion == null ? 0 : completion;
-            Optional<Long> micros = prices.costMicros(priced, promptTokens, completionTokens);
+            Optional<Long> micros = prices.costMicros(provider, priced, promptTokens, completionTokens);
             if (micros.isEmpty()) {
                 if (priced != null) {
                     noteMissing(exchange, priced, principal.tenantId());
@@ -214,8 +225,8 @@ public final class ActiveChatTenancy implements ChatTenancy {
                     if (decision.allowed()) {
                         return Mono.empty();
                     }
-                    metrics.recordRejection("rate_limit_exceeded", requestedModel, principal.tenantId());
-                    record(exchange, ROUTE, "none", requestedModel, null, 429, "rate_limit_exceeded", System.nanoTime());
+                    metrics.recordRejection(routeName(exchange), "rate_limit_exceeded", requestedModel, principal.tenantId());
+                    record(exchange, routeName(exchange), "none", requestedModel, null, 429, "rate_limit_exceeded", System.nanoTime());
                     return Mono.error(TenancyException.rateLimit(decision));
                 });
     }
@@ -245,12 +256,12 @@ public final class ActiveChatTenancy implements ChatTenancy {
                             limits.budgetWindow());
                     RateLimitDecision rate = exchange.getAttribute(TenancyExchange.REQUEST_RATE);
                     if (check.reason() == BudgetCheck.Reason.COST) {
-                        metrics.recordRejection("cost_budget_exceeded", priceModel, principal.tenantId());
-                        record(exchange, ROUTE, "none", priceModel, null, 429, "cost_budget_exceeded", System.nanoTime());
+                        metrics.recordRejection(routeName(exchange), "cost_budget_exceeded", priceModel, principal.tenantId());
+                        record(exchange, routeName(exchange), "none", priceModel, null, 429, "cost_budget_exceeded", System.nanoTime());
                         return Mono.error(TenancyException.costBudget(retry, rate));
                     }
-                    metrics.recordRejection("token_budget_exceeded", priceModel, principal.tenantId());
-                    record(exchange, ROUTE, "none", priceModel, null, 429, "token_budget_exceeded", System.nanoTime());
+                    metrics.recordRejection(routeName(exchange), "token_budget_exceeded", priceModel, principal.tenantId());
+                    record(exchange, routeName(exchange), "none", priceModel, null, 429, "token_budget_exceeded", System.nanoTime());
                     return Mono.error(TenancyException.tokenBudget(retry, rate));
                 });
     }
@@ -301,6 +312,14 @@ public final class ActiveChatTenancy implements ChatTenancy {
     /** Redis budgets and {@code gateway.cost.estimated} track provider spend, not cache hits. */
     private static boolean providerSpend(String cache) {
         return "none".equals(cache);
+    }
+
+    private static String routeName(ServerWebExchange exchange) {
+        Object value = exchange.getAttribute(TenancyExchange.ROUTE);
+        if (value instanceof String text && !text.isBlank()) {
+            return text;
+        }
+        return CHAT_ROUTE;
     }
 
     private static ApiKeyRecord principal(ServerWebExchange exchange) {

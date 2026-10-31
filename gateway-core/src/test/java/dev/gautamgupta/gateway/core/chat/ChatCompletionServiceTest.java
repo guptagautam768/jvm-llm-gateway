@@ -388,7 +388,7 @@ class ChatCompletionServiceTest {
     }
 
     @Test
-    void embeddingsAreUnsupportedUntilImplemented() {
+    void defaultEmbedIsUnsupportedUntilAnAdapterOverridesIt() {
         FakeProvider provider = new FakeProvider(ProviderIds.OPENAI);
         StepVerifier.create(provider.embed(new EmbeddingRequest("text-embedding-3-small", null)))
                 .expectErrorSatisfies(error -> assertThat(((ProviderException) error).kind())

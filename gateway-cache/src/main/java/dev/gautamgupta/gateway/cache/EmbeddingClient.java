@@ -3,9 +3,8 @@ package dev.gautamgupta.gateway.cache;
 import reactor.core.publisher.Mono;
 
 /**
- * Embedding call used by the semantic cache. Week 4 wires this to the OpenAI
- * WebClient adapter. Ollama is deferred. The public {@code /v1/embeddings} route
- * is not this type.
+ * Embedding call used by the semantic cache. The public {@code POST /v1/embeddings}
+ * route is a separate API and does not go through this type.
  */
 public interface EmbeddingClient {
 

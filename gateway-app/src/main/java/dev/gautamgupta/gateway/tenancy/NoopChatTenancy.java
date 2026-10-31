@@ -2,10 +2,11 @@ package dev.gautamgupta.gateway.tenancy;
 
 import dev.gautamgupta.gateway.api.Usage;
 import dev.gautamgupta.gateway.api.chat.ChatCompletionRequest;
+import dev.gautamgupta.gateway.tenancy.budget.UsageEstimate;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
-/** Used when {@code gateway.tenancy.enabled} is false. Chat stays open, as in weeks 1 and 2. */
+/** Used when {@code gateway.tenancy.enabled} is false. Metered routes stay open. */
 public final class NoopChatTenancy implements ChatTenancy {
 
     @Override
@@ -14,7 +15,12 @@ public final class NoopChatTenancy implements ChatTenancy {
     }
 
     @Override
-    public Mono<Void> reconcile(ServerWebExchange exchange, String servedModel, Usage usage) {
+    public Mono<Void> preflight(ServerWebExchange exchange, String route, String requestedModel, UsageEstimate estimate) {
+        return Mono.empty();
+    }
+
+    @Override
+    public Mono<Void> reconcile(ServerWebExchange exchange, String provider, String servedModel, Usage usage) {
         return Mono.empty();
     }
 

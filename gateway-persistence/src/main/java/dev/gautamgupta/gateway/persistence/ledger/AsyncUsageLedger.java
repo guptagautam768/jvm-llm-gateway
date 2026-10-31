@@ -1,5 +1,8 @@
 package dev.gautamgupta.gateway.persistence.ledger;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,6 +19,8 @@ public final class AsyncUsageLedger implements UsageLedger {
 
     private final Sinks.Many<UsageLedgerEntry> sink;
     private final UsageLedgerEvents events;
+    private final CountDownLatch drained = new CountDownLatch(1);
+    private final AtomicBoolean closed = new AtomicBoolean(false);
 
     public AsyncUsageLedger(
             int bufferSize,
@@ -32,10 +37,30 @@ public final class AsyncUsageLedger implements UsageLedger {
                             this.events.failed(error);
                             return Mono.empty();
                         }), 4)
+                .doFinally(signal -> drained.countDown())
                 .subscribe(
                         ignored -> {
                         },
                         error -> log.error("usage ledger stream stopped", error));
+    }
+
+    /**
+     * Finish queued inserts during shutdown. The request path does not wait on this.
+     * A second call is a no-op. The wait is bounded so a stuck insert cannot hold the process.
+     */
+    public void close() {
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
+        sink.tryEmitComplete();
+        try {
+            if (!drained.await(5, TimeUnit.SECONDS)) {
+                log.warn("usage ledger did not drain within 5s");
+            }
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            log.warn("usage ledger drain interrupted");
+        }
     }
 
     @Override

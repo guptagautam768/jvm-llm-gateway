@@ -5,33 +5,35 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.gautamgupta.gateway.api.embed.EmbeddingRequest;
 import dev.gautamgupta.gateway.api.embed.EmbeddingResponse;
 import dev.gautamgupta.gateway.cache.EmbeddingClient;
-import dev.gautamgupta.gateway.providers.openai.OpenAiProviderClient;
+import dev.gautamgupta.gateway.core.provider.ProviderClient;
+import dev.gautamgupta.gateway.core.provider.ProviderRegistry;
 import reactor.core.publisher.Mono;
 
 /**
- * Semantic-cache embeddings via the OpenAI WebClient adapter.
- * {@code POST /v1/embeddings} is not exposed by the gateway.
+ * Semantic-cache embeddings through whichever provider {@code gateway.cache.semantic.embedding-provider}
+ * names (ADR-0006). A missing key or a provider that cannot embed makes {@link #available()} false,
+ * and the cache treats that as a miss.
  */
-public final class OpenAiEmbeddingClient implements EmbeddingClient {
+public final class RoutingEmbeddingClient implements EmbeddingClient {
 
-    private final OpenAiProviderClient client;
+    private final ProviderClient client;
     private final ObjectMapper objectMapper;
     private final String model;
     private final int dimensions;
     private final boolean available;
 
-    public OpenAiEmbeddingClient(
-            OpenAiProviderClient client,
+    public RoutingEmbeddingClient(
+            ProviderRegistry registry,
             ObjectMapper objectMapper,
             String provider,
             String model,
             int dimensions
     ) {
-        this.client = client;
         this.objectMapper = objectMapper;
         this.model = model == null || model.isBlank() ? "text-embedding-3-small" : model;
         this.dimensions = dimensions;
-        this.available = "openai".equals(provider) && configured(client);
+        this.client = resolve(registry, provider);
+        this.available = this.client != null;
     }
 
     @Override
@@ -65,12 +67,19 @@ public final class OpenAiEmbeddingClient implements EmbeddingClient {
         return vector;
     }
 
-    private static boolean configured(OpenAiProviderClient client) {
+    private static ProviderClient resolve(ProviderRegistry registry, String provider) {
+        if (registry == null || provider == null || provider.isBlank()) {
+            return null;
+        }
         try {
+            ProviderClient client = registry.get(provider);
+            if (!client.capabilities().embeddings()) {
+                return null;
+            }
             client.ensureConfigured();
-            return true;
+            return client;
         } catch (RuntimeException ex) {
-            return false;
+            return null;
         }
     }
 }

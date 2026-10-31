@@ -32,6 +32,12 @@ class BudgetMathTest {
         PriceCatalog catalog = new PriceCatalog(Map.of("gpt-4o-mini", price));
         assertThat(catalog.costMicros("gpt-4o-mini", 5, 7)).contains(66L);
         assertThat(catalog.find("missing")).isEmpty();
+
+        PriceCatalog ollama = new PriceCatalog(Map.of("gpt-4o-mini", price), java.util.Set.of("ollama"));
+        assertThat(ollama.costMicros("ollama", "llama3.2", 1000, 0)).contains(0L);
+        assertThat(ollama.find("ollama", "llama3.2")).contains(ModelPrice.ZERO);
+        assertThat(ollama.costMicros("ollama", "gpt-4o-mini", 5, 7)).contains(66L);
+        assertThat(ollama.find("openai", "llama3.2")).isEmpty();
     }
 
     @Test

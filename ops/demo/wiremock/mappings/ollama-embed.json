@@ -1,0 +1,16 @@
+{
+  "priority": 1,
+  "request": {
+    "method": "POST",
+    "url": "/api/embed"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "model": "nomic-embed-text",
+      "embeddings": [[0.1, 0.2, 0.3]],
+      "prompt_eval_count": 4
+    }
+  }
+}

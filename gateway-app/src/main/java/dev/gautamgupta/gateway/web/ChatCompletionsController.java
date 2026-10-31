@@ -3,6 +3,7 @@ package dev.gautamgupta.gateway.web;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.gautamgupta.gateway.api.Usage;
+import dev.gautamgupta.gateway.api.error.ApiErrorResponse;
 import dev.gautamgupta.gateway.api.chat.ChatCompletionChunk;
 import dev.gautamgupta.gateway.api.chat.ChatCompletionRequest;
 import dev.gautamgupta.gateway.api.chat.ChatCompletionResponse;
@@ -109,7 +110,7 @@ public class ChatCompletionsController {
                         CachedCompletion cached = decision.hit();
                         exchange.getAttributes().put(TenancyExchange.CACHE, decision.hitType());
                         exchange.getAttributes().put(TenancyExchange.CACHE_HIT, Boolean.TRUE);
-                        return tenancy.reconcile(exchange, cached.model(), cached.response().usage())
+                        return tenancy.reconcile(exchange, cached.provider(), cached.model(), cached.response().usage())
                                 .thenReturn(cached.response())
                                 .doOnNext(body -> {
                                     metrics.recordCacheHit(
@@ -122,7 +123,7 @@ public class ChatCompletionsController {
                     return service.complete(decision.redacted(), trace)
                             .flatMap(body -> cache.store(
                                             decision, new CachedCompletion(trace.providerId(), trace.model(), body))
-                                    .then(tenancy.reconcile(exchange, trace.model(), body.usage()))
+                                    .then(tenancy.reconcile(exchange, trace.providerId(), trace.model(), body.usage()))
                                     .thenReturn(body))
                             .doOnNext(body -> {
                                 recordAttempts(trace);
@@ -159,7 +160,7 @@ public class ChatCompletionsController {
                     if (failed.get()) {
                         return Flux.empty();
                     }
-                    return tenancy.reconcile(exchange, trace.model(), usage.get())
+                    return tenancy.reconcile(exchange, trace.providerId(), trace.model(), usage.get())
                             .thenMany(Flux.just(doneEvent()));
                 }))
                 .doOnComplete(() -> {
@@ -177,7 +178,7 @@ public class ChatCompletionsController {
         metrics.recordError(ROUTE, trace.providerId(), trace.model(), error, start, tenancy.tenantId(exchange));
         Outcome outcome = outcome(error);
         tenancy.record(exchange, ROUTE, trace.providerId(), trace.model(), null, outcome.status(), outcome.code(), start);
-        return tenancy.reconcile(exchange, trace.model(), null);
+        return tenancy.reconcile(exchange, trace.providerId(), trace.model(), null);
     }
 
     private void recordAttempts(AttemptTrace trace) {
@@ -249,13 +250,15 @@ public class ChatCompletionsController {
                 default -> "upstream_unavailable";
             };
         }
-        String json = "{\"error\":{\"message\":\"" + escape(message)
-                + "\",\"type\":\"server_error\",\"code\":\"" + code + "\"}}";
-        return ServerSentEvent.<String>builder().data(json).build();
-    }
-
-    private static String escape(String value) {
-        return value.replace("\\", "\\\\").replace("\"", "\\\"");
+        try {
+            String json = objectMapper.writeValueAsString(ApiErrorResponse.of(
+                    message, "server_error", code, null));
+            return ServerSentEvent.<String>builder().data(json).build();
+        } catch (JsonProcessingException ex) {
+            return ServerSentEvent.<String>builder()
+                    .data("{\"error\":{\"message\":\"The provider failed while streaming.\",\"type\":\"server_error\",\"code\":\"upstream_unavailable\"}}")
+                    .build();
+        }
     }
 
     private ServerSentEvent<String> doneEvent() {

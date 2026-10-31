@@ -1,0 +1,11 @@
+# No paid provider keys. Routes and the semantic cache point at Ollama.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.ollama.yml up --build
+# Then pull models (once): docker compose exec ollama ollama pull llama3.2
+#                         docker compose exec ollama ollama pull nomic-embed-text
+services:
+  gateway:
+    environment:
+      SPRING_PROFILES_ACTIVE: ollama
+      OLLAMA_BASE_URL: http://ollama:11434
+      OPENAI_API_KEY: ""
+      ANTHROPIC_API_KEY: ""

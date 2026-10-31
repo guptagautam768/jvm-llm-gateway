@@ -12,6 +12,7 @@ import dev.gautamgupta.gateway.guardrails.pii.detectors.PanDetector;
 import dev.gautamgupta.gateway.guardrails.pii.detectors.PhoneDetector;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Redact-and-forward pipeline (ADR-0009). Placeholders are stable inside one request.
@@ -79,5 +80,28 @@ public final class PiiRedactionPipeline implements PromptRedactor {
         ChatCompletionRequest redacted = messages == request.messages() ? request : request.withMessages(messages);
         boolean rejected = settings.modeFor(tenantId) == PiiMode.REJECT;
         return new RedactionResult(redacted, session.counts(), rejected);
+    }
+
+    @Override
+    public TextRedaction applyTexts(List<String> texts, String tenantId) {
+        List<String> source = texts == null ? List.of() : texts;
+        if (settings.modeFor(tenantId) == PiiMode.OFF) {
+            return TextRedaction.unchanged(source);
+        }
+        RedactionSession session = new RedactionSession(detectors);
+        List<String> rewritten = new ArrayList<>(source.size());
+        boolean changed = false;
+        for (String text : source) {
+            String next = session.rewrite(text);
+            rewritten.add(next);
+            if (!Objects.equals(next, text)) {
+                changed = true;
+            }
+        }
+        if (!changed && session.counts().isEmpty()) {
+            return TextRedaction.unchanged(source);
+        }
+        boolean rejected = settings.modeFor(tenantId) == PiiMode.REJECT;
+        return new TextRedaction(rewritten, session.counts(), rejected);
     }
 }

@@ -1,5 +1,6 @@
 package dev.gautamgupta.gateway.config;
 
+import dev.gautamgupta.gateway.core.provider.ProviderIds;
 import dev.gautamgupta.gateway.core.routing.ModelRouter;
 import dev.gautamgupta.gateway.metrics.GatewayMetrics;
 import dev.gautamgupta.gateway.persistence.ledger.AsyncUsageLedger;
@@ -66,7 +67,12 @@ public class TenancyConfiguration {
         properties.getPrices().forEach((model, quote) -> prices.put(
                 model,
                 new ModelPrice(quote.getPromptPer1kUsd(), quote.getCompletionPer1kUsd())));
-        return new PriceCatalog(prices);
+        return new PriceCatalog(prices, java.util.Set.of(ProviderIds.OLLAMA));
+    }
+
+    @Bean
+    TokenEstimator tokenEstimator(TenancyProperties properties) {
+        return new TokenEstimator(properties.getDefaultCompletionTokens());
     }
 
     @Bean
@@ -75,6 +81,7 @@ public class TenancyConfiguration {
             PriceCatalog prices,
             ModelRouter router,
             GatewayMetrics metrics,
+            TokenEstimator estimator,
             ObjectProvider<RequestLimiter> limiter,
             ObjectProvider<BudgetCounter> budgets,
             ObjectProvider<UsageLedger> ledger
@@ -87,7 +94,7 @@ public class TenancyConfiguration {
                 budgets.getObject(),
                 ledger.getObject(),
                 router,
-                new TokenEstimator(properties.getDefaultCompletionTokens()),
+                estimator,
                 prices,
                 metrics);
     }
@@ -138,7 +145,7 @@ public class TenancyConfiguration {
             };
         }
 
-        @Bean
+        @Bean(destroyMethod = "close")
         UsageLedger usageLedger(DatabaseClient databaseClient, LedgerProperties ledgerProperties, UsageLedgerEvents events) {
             R2dbcUsageLedgerWriter writer = new R2dbcUsageLedgerWriter(databaseClient);
             return new AsyncUsageLedger(ledgerProperties.getBufferSize(), writer::insert, events);

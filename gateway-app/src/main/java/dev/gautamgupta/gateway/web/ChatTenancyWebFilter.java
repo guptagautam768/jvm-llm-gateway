@@ -31,7 +31,7 @@ import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
 
 /**
- * Auth and the per-tenant request bucket for {@code POST /v1/chat/completions}.
+ * Auth and the per-tenant request bucket for chat completions and embeddings.
  * {@code Authorization: Bearer} is accepted, and so is the {@code api-key} header.
  * Redis failures on this path are 503 (fail-closed).
  */
@@ -39,6 +39,7 @@ public final class ChatTenancyWebFilter implements WebFilter, Ordered {
 
     private static final Logger log = LoggerFactory.getLogger(ChatTenancyWebFilter.class);
     private static final String CHAT = "/v1/chat/completions";
+    private static final String EMBEDDINGS = "/v1/embeddings";
 
     private final TenantAuthenticator authenticator;
     private final RequestLimiter limiter;
@@ -70,13 +71,15 @@ public final class ChatTenancyWebFilter implements WebFilter, Ordered {
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
-        if (!isChat(exchange)) {
+        String route = meteredRoute(exchange);
+        if (route == null) {
             return chain.filter(exchange);
         }
         exchange.getAttributes().put(TenancyExchange.STARTED, System.nanoTime());
+        exchange.getAttributes().put(TenancyExchange.ROUTE, route);
         String presented = credential(exchange.getRequest());
         if (presented == null) {
-            metrics.recordAccess("chat.completions", "401", null);
+            metrics.recordAccess(route, "401", null);
             return Spans.mono(observations, "gateway.auth", write(exchange, TenancyException.invalidApiKey()));
         }
         return Spans.mono(observations, "gateway.auth", authenticator.authenticate(presented)
@@ -86,17 +89,17 @@ public final class ChatTenancyWebFilter implements WebFilter, Ordered {
                                         record.limits().rateRefillPerSecond(),
                                         1)
                                 .map(decision -> new Authed(record, decision))))
-                .flatMap(authed -> afterLimit(exchange, chain, authed.record(), authed.decision()))
+                .flatMap(authed -> afterLimit(exchange, chain, route, authed.record(), authed.decision()))
                 .onErrorResume(TenancyException.class, ex -> {
                     if (ex.kind() == TenancyException.Kind.DEPENDENCY) {
-                        metrics.recordAccess("chat.completions", "503", null);
+                        metrics.recordAccess(route, "503", null);
                         log.error("tenancy dependency failed");
                     } else if (ex.kind() == TenancyException.Kind.TENANT_DISABLED) {
-                        metrics.recordAccess("chat.completions", "403", null);
-                        log.warn("chat rejected code=tenant_disabled");
+                        metrics.recordAccess(route, "403", null);
+                        log.warn("request rejected code=tenant_disabled route={}", route);
                     } else if (ex.kind() == TenancyException.Kind.INVALID_API_KEY) {
-                        metrics.recordAccess("chat.completions", "401", null);
-                        log.warn("chat rejected code=invalid_api_key");
+                        metrics.recordAccess(route, "401", null);
+                        log.warn("request rejected code=invalid_api_key route={}", route);
                     }
                     return write(exchange, ex);
                 });
@@ -105,21 +108,22 @@ public final class ChatTenancyWebFilter implements WebFilter, Ordered {
     private Mono<Void> afterLimit(
             ServerWebExchange exchange,
             WebFilterChain chain,
+            String route,
             ApiKeyRecord record,
             dev.gautamgupta.gateway.tenancy.limit.RateLimitDecision decision
     ) {
         exchange.getAttributes().put(TenancyExchange.PRINCIPAL, record);
         exchange.getAttributes().put(TenancyExchange.REQUEST_RATE, decision);
         if (!decision.allowed()) {
-            metrics.recordRejection("rate_limit_exceeded", "none", record.tenantId());
-            recordLimit(exchange, record);
-            log.warn("chat rejected code=rate_limit_exceeded tenant={}", record.tenantId());
+            metrics.recordRejection(route, "rate_limit_exceeded", "none", record.tenantId());
+            recordLimit(exchange, route, record);
+            log.warn("request rejected code=rate_limit_exceeded route={} tenant={}", route, record.tenantId());
             return write(exchange, TenancyException.rateLimit(decision));
         }
         return chain.filter(exchange);
     }
 
-    private void recordLimit(ServerWebExchange exchange, ApiKeyRecord record) {
+    private void recordLimit(ServerWebExchange exchange, String route, ApiKeyRecord record) {
         Long started = exchange.getAttribute(TenancyExchange.STARTED);
         long start = started == null ? System.nanoTime() : started;
         int latency = (int) Math.max(0, (System.nanoTime() - start) / 1_000_000L);
@@ -129,7 +133,7 @@ public final class ChatTenancyWebFilter implements WebFilter, Ordered {
                 OffsetDateTime.now(ZoneOffset.UTC),
                 record.tenantId(),
                 requestId == null || requestId.isBlank() ? "unknown" : requestId,
-                "chat.completions",
+                route,
                 null,
                 null,
                 null,
@@ -161,11 +165,18 @@ public final class ChatTenancyWebFilter implements WebFilter, Ordered {
         return response.writeWith(Mono.just(buffer));
     }
 
-    static boolean isChat(ServerWebExchange exchange) {
+    static String meteredRoute(ServerWebExchange exchange) {
         if (!HttpMethod.POST.equals(exchange.getRequest().getMethod())) {
-            return false;
+            return null;
         }
-        return CHAT.equals(exchange.getRequest().getPath().pathWithinApplication().value());
+        String path = exchange.getRequest().getPath().pathWithinApplication().value();
+        if (CHAT.equals(path)) {
+            return "chat.completions";
+        }
+        if (EMBEDDINGS.equals(path)) {
+            return "embeddings";
+        }
+        return null;
     }
 
     /**
