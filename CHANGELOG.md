@@ -1,9 +1,12 @@
 # Changelog
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-This project does not yet have a git tag. Versions below describe the milestone, not a published release.
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-10-31
+
+First release. Weeks 1–5 (OpenAI and Anthropic WebClient adapters, YAML aliases and Resilience4j, tenancy, rate limits, budgets, the usage ledger, exact and semantic Redis cache, PII redaction, and `gateway.*` metrics; ADR-0001 through ADR-0014) plus the additions below.
 
 ### Added
 
@@ -15,13 +18,9 @@ This project does not yet have a git tag. Versions below describe the milestone,
 - OpenAI-style JSON for 404, 405, and 415. Ollama errors are rewritten into that shape.
 - Ledger drain on shutdown (up to 5 seconds), after the existing graceful server shutdown.
 - Official OpenAI Java SDK contract test for chat and embeddings (WireMock behind the gateway).
-- `scripts/demo.sh`, `CHANGELOG.md`, `CONTRIBUTING.md`, and a v1.0.0 release-notes draft.
-- [ADR-0015](docs/adr/0015-ollama-webclient-and-public-embeddings.md) (Proposed).
+- `scripts/demo.sh`, this changelog, `CONTRIBUTING.md`, and [v1.0.0 release notes](docs/releases/v1.0.0.md).
+- [ADR-0015](docs/adr/0015-ollama-webclient-and-public-embeddings.md) (Accepted).
 
 ### Changed
 
-- README is the go-live overview: architecture, features, quickstart, curl, and the ADR index. Week-by-week notes moved out of the front page.
-
-## [0.1.0] - weeks 1–5, untagged
-
-Shipped on `main` before the week-6 branch: OpenAI and Anthropic WebClient adapters, YAML aliases and Resilience4j, tenancy, rate limits, budgets, the usage ledger, exact and semantic Redis cache, PII redaction, and `gateway.*` metrics (ADR-0001 through ADR-0014, Accepted).
+- README is the go-live overview: architecture, features, quickstart, curl, and the ADR index.

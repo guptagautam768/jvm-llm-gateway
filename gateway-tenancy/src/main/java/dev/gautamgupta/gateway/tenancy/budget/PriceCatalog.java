@@ -6,7 +6,7 @@ import java.util.Set;
 
 /**
  * YAML price table (FR-071). A missing model yields an empty lookup, not a zero price,
- * unless the serving provider is in the zero-cost set (Ollama, ADR-0015 Proposed).
+ * unless the serving provider is in the zero-cost set (Ollama, ADR-0015).
  * An explicit row always wins, including a non-zero price for that provider.
  */
 public final class PriceCatalog {

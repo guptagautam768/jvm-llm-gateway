@@ -6,7 +6,7 @@
 
 OpenAI-compatible LLM gateway for the JVM. Application teams point an OpenAI SDK at one base URL. The gateway owns provider access, alias routing, resilience, caller tenancy, a usage ledger, response caching, and PII redaction before a prompt leaves the process.
 
-This is platform infrastructure for Gautam Gupta's portfolio, not a RAG or agent product. Requirements: [SDR-0001](docs/sdr/0001-jvm-llm-gateway-sdr.md) (APPROVED v1.0). Decisions: [ADR index](#adr-index). A v1.0.0 tag has not been cut; the draft notes are in [docs/releases/v1.0.0.md](docs/releases/v1.0.0.md).
+This is platform infrastructure for Gautam Gupta's portfolio, not a RAG or agent product. Requirements: [SDR-0001](docs/sdr/0001-jvm-llm-gateway-sdr.md) (APPROVED v1.0). Decisions: [ADR index](#adr-index) (ADR-0001 through ADR-0015 Accepted). Release notes: [v1.0.0](docs/releases/v1.0.0.md) (2026-10-31).
 
 ## Architecture
 
@@ -256,7 +256,7 @@ WireMock stands in for OpenAI, Anthropic, and Ollama. `TenancyLedgerIT` and `Res
 | [0001](docs/adr/0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
 | [0002](docs/adr/0002-build-java21-spring-boot-gradle-multimodule.md) | Java 21, Spring Boot 3.x, Gradle multi-module | Accepted |
 | [0003](docs/adr/0003-http-stack-spring-webflux.md) | WebFlux end to end | Accepted |
-| [0004](docs/adr/0004-provider-abstraction-spring-ai.md) | `ProviderClient` port | Accepted; adapters amended by 0012, 0013, and proposed 0015 |
+| [0004](docs/adr/0004-provider-abstraction-spring-ai.md) | `ProviderClient` port | Accepted; adapters amended by 0012, 0013, and 0015 |
 | [0005](docs/adr/0005-routing-yaml-aliases-resilience4j.md) | YAML aliases and Resilience4j | Accepted |
 | [0006](docs/adr/0006-caching-redis-exact-and-semantic.md) | Redis exact and semantic cache | Accepted |
 | [0007](docs/adr/0007-tenancy-api-keys-rate-limits-budgets.md) | API keys, rate limits, budgets | Accepted |
@@ -267,7 +267,7 @@ WireMock stands in for OpenAI, Anthropic, and Ollama. `TenancyLedgerIT` and `Res
 | [0012](docs/adr/0012-openai-adapter-direct-webclient.md) | OpenAI WebClient adapter | Accepted |
 | [0013](docs/adr/0013-anthropic-adapter-direct-webclient.md) | Anthropic WebClient adapter | Accepted |
 | [0014](docs/adr/0014-guardrail-limits-and-week5-metrics.md) | Size limit, placeholders, week-5 metrics | Accepted |
-| [0015](docs/adr/0015-ollama-webclient-and-public-embeddings.md) | Ollama WebClient adapter and public embeddings | **Proposed** |
+| [0015](docs/adr/0015-ollama-webclient-and-public-embeddings.md) | Ollama WebClient adapter and public embeddings | Accepted |
 
 Full index: [docs/adr/README.md](docs/adr/README.md).
 
@@ -283,4 +283,4 @@ Redis Stack modules (RediSearch and the rest of the `redis/redis-stack-server` i
 - [ADR index](docs/adr/README.md)
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)
-- [v1.0.0 release notes (draft)](docs/releases/v1.0.0.md)
+- [v1.0.0 release notes](docs/releases/v1.0.0.md)

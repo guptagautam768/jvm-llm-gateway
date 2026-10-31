@@ -30,7 +30,7 @@ import reactor.core.publisher.Mono;
 /**
  * Ollama chat, streaming, and embeddings adapter.
  *
- * <p>ADR-0015 (Proposed): this client calls Ollama's native HTTP API with
+ * <p>ADR-0015: this client calls Ollama's native HTTP API with
  * {@link WebClient} and translates the JSON or NDJSON response into gateway DTOs.
  * Retries stay outside the call, with Resilience4j.
  */

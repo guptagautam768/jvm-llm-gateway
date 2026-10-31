@@ -9,7 +9,7 @@ import java.util.List;
 
 /**
  * Fail-fast checks that ADR-0005's route table does not cover: base URLs, timeouts,
- * and the semantic-cache embedding provider (ADR-0015, Proposed).
+ * and the semantic-cache embedding provider (ADR-0015).
  */
 public final class GatewayStartupChecks {
 

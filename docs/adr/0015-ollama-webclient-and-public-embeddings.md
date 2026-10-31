@@ -2,9 +2,9 @@
 
 | Field | Value |
 |---|---|
-| **Status** | Proposed |
+| **Status** | Accepted (approved by Gautam Gupta, 31 Oct 2026) |
 | **Date** | 31 Oct 2026 |
-| **Deciders** | Gautam Gupta (not yet accepted) |
+| **Deciders** | Gautam Gupta |
 | **Requirements** | [SDR-0001 v1.0](../sdr/0001-jvm-llm-gateway-sdr.md) |
 | **Amends** | [ADR-0004](./0004-provider-abstraction-spring-ai.md) for the Ollama adapter only |
 
@@ -12,7 +12,7 @@
 
 [ADR-0004](./0004-provider-abstraction-spring-ai.md) still names Spring AI as the Ollama implementation. [ADR-0012](./0012-openai-adapter-direct-webclient.md) and [ADR-0013](./0013-anthropic-adapter-direct-webclient.md) already left Spring AI for OpenAI and Anthropic: a direct `WebClient` stays non-blocking (ADR-0003), keeps Resilience4j as the only retry policy (ADR-0005), and is what WireMock asserts. Spring AI's Ollama client has the same two problems ADR-0013 recorded for Anthropic: a blocking `RestClient` and a `RetryTemplate` of its own.
 
-Week 6 also exposes `POST /v1/embeddings` (FR-002, API-020/021/022). Auth, rate limits, budgets, the ledger, PII redaction, and `gateway.*` metrics apply as they do for chat. A few operational choices are not fixed by the accepted ADRs. This record states them so they are not silent. The week-6 code follows this proposal so the milestone can be reviewed. It does not mark ADR-0004 superseded.
+Week 6 also exposes `POST /v1/embeddings` (FR-002, API-020/021/022). Auth, rate limits, budgets, the ledger, PII redaction, and `gateway.*` metrics apply as they do for chat. A few operational choices are not fixed by the earlier ADRs. This record states them so they are not silent. It amends ADR-0004 for the Ollama adapter only. It does not replace the `ProviderClient` port.
 
 ## Decision drivers
 
@@ -27,18 +27,18 @@ Week 6 also exposes `POST /v1/embeddings` (FR-002, API-020/021/022). Auth, rate 
 
 ## Decision outcome
 
-**Proposed: option 2.** Not accepted.
+**Chosen: option 2.** Accepted by Gautam Gupta on 31 Oct 2026. The decisions below are unchanged from the proposal.
 
 The Ollama provider is a `WebClient` adapter in `gateway-providers`. The base URL is `gateway.providers.ollama.base-url` (`OLLAMA_BASE_URL`, default `http://127.0.0.1:11434`). No API key is required. If `OLLAMA_API_KEY` is set, the adapter sends it as `Authorization: Bearer`. Timeouts live on that client. Retries and circuit breaking stay outside the call, per ADR-0005.
 
-Mapping notes that belong with the adapter, unless this proposal is rejected:
+Mapping notes that belong with the adapter:
 
 - Text chat is translated, including `temperature`, `top_p`, `stop`, and `max_tokens` / `max_completion_tokens` (`options.num_predict`). `n` greater than 1 is rejected. Non-text content parts are rejected. Tools, penalties, and `response_format` are not forwarded.
 - Native streaming is newline-delimited JSON. The adapter turns that into OpenAI chat chunks. The gateway edge still writes SSE and `data: [DONE]`.
 - Embeddings use `/api/embed` (`input` as a string or an array). The response is rewritten to OpenAI's `data[].embedding` shape. `dimensions` is forwarded when the client sends it. `encoding_format` and `user` are ignored (FR-001's ignore option).
 - Ollama errors are rewritten into the OpenAI error body before they leave the adapter, as Anthropic's errors already are.
 
-The public embeddings route, in the same proposal:
+The public embeddings route:
 
 - `POST /v1/embeddings` requires a caller key and walks the same alias table as chat. A target whose provider cannot embed (Anthropic) is skipped. That skip is not a provider error and does not increment `gateway.fallbacks`. If no target can embed, the client gets **501** `not_implemented`. Startup still fails on an unknown provider or a target that cannot chat (ADR-0005). It does **not** fail because a chat alias includes Anthropic: those aliases are shared, and ADR-0004 already says Anthropic has no embeddings.
 - The pipeline is the ADR-0009 order: size limit, then redaction, then the provider. There is no response cache. ADR-0006 scopes exact and semantic cache to non-streaming chat. Embeddings do not read or write it and do not send `X-Cache`.
@@ -49,7 +49,7 @@ The public embeddings route, in the same proposal:
 - Metrics use the existing ADR-0010 names with `route=embeddings`. No new series.
 - Semantic-cache embeddings go through `ProviderClient.embed` for `gateway.cache.semantic.embedding-provider` (ADR-0006's configurable embedding route). The default stays OpenAI `text-embedding-3-small` at 1536 dimensions. A missing key makes semantic lookup a miss; it does not fail startup. An unknown provider id does fail startup.
 
-Startup validation that this proposal adds, beyond ADR-0005's route checks: provider base URLs must be absolute `http` or `https`, timeouts and cache bounds must be positive, and the semantic embedding provider id must exist and report an embeddings capability when semantic cache is enabled.
+Startup validation beyond ADR-0005's route checks: provider base URLs must be absolute `http` or `https`, timeouts and cache bounds must be positive, and the semantic embedding provider id must exist and report an embeddings capability when semantic cache is enabled.
 
 Graceful shutdown stays `server.shutdown=graceful` with a 20s phase. On context close the async ledger drain waits up to 5 seconds. That wait is shutdown only; the request path does not block on the ledger (ADR-0008).
 
@@ -62,12 +62,12 @@ Graceful shutdown stays `server.shutdown=graceful` with a 20s phase. On context 
 - ➖ Skipping a target that cannot embed is easy to confuse with fallback. It is a different counter on purpose.
 - ➖ Ollama's zero price is a default, not an invoice. An explicit price row overrides it.
 - ➖ Embeddings are not cached. A repeated embeddings call always hits a provider unless some later ADR says otherwise.
-- ➖ If this ADR is rejected, the Ollama client should be replaced and the public route's skip rule rewritten. Chat routing for OpenAI and Anthropic does not depend on that choice.
+- ➖ OpenAI and Anthropic chat routing do not depend on the Ollama client. The embeddings skip rule does.
 
 ## Links
 
 - [SDR-0001](../sdr/0001-jvm-llm-gateway-sdr.md)
-- [ADR-0004](./0004-provider-abstraction-spring-ai.md) — port; Ollama implementation is the subject of this proposal
+- [ADR-0004](./0004-provider-abstraction-spring-ai.md) — port; Ollama implementation is amended here
 - [ADR-0012](./0012-openai-adapter-direct-webclient.md), [ADR-0013](./0013-anthropic-adapter-direct-webclient.md) — the same WebClient choice, already Accepted
 - [ADR-0006](./0006-caching-redis-exact-and-semantic.md) — chat cache; embeddings responses are out of scope
 - [ADR index](./README.md)

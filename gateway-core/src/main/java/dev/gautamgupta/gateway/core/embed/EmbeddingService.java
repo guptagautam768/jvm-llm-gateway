@@ -22,7 +22,7 @@ import reactor.core.publisher.Mono;
 
 /**
  * Validates an embeddings request and walks the alias chain. Targets that cannot
- * embed are skipped (ADR-0015, Proposed). Each capable target uses the same
+ * embed are skipped (ADR-0015). Each capable target uses the same
  * time limiter, circuit breaker, and retry as chat (ADR-0005).
  */
 public final class EmbeddingService {
