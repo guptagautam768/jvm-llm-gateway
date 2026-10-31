@@ -17,6 +17,6 @@ Decisions on *how* to build what [SDR-0001 v1.0 (APPROVED)](../sdr/0001-jvm-llm-
 | [0011](./0011-testing-ci-and-licensing.md) | Testing, CI and licensing: JUnit 5, WireMock, Testcontainers, GitHub Actions, JaCoCo, Apache-2.0 | Accepted |
 | [0012](./0012-openai-adapter-direct-webclient.md) | OpenAI adapter: direct WebClient behind `ProviderClient` | Accepted |
 | [0013](./0013-anthropic-adapter-direct-webclient.md) | Anthropic adapter: direct WebClient and OpenAI wire translation | Accepted |
-| [0014](./0014-guardrail-limits-and-week5-metrics.md) | Guardrail limits, placeholder identity, and the week-5 metric extensions | Proposed |
+| [0014](./0014-guardrail-limits-and-week5-metrics.md) | Guardrail limits, placeholder identity, and the week-5 metric extensions | Accepted |
 
 **Process:** Proposed → reviewed by Gautam Gupta → Accepted / Rejected. No implementation before acceptance. Superseding decisions get a new number.

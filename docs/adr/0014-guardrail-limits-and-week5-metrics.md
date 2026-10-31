@@ -2,9 +2,9 @@
 
 | Field | Value |
 |---|---|
-| **Status** | Proposed |
+| **Status** | Accepted (approved by Gautam Gupta, 31 Oct 2026) |
 | **Date** | 31 Oct 2026 IST |
-| **Deciders** | Gautam Gupta (pending review) |
+| **Deciders** | Gautam Gupta |
 | **Requirements** | [SDR-0001 v1.0](../sdr/0001-jvm-llm-gateway-sdr.md) |
 
 ## Context
@@ -23,7 +23,7 @@
 
 ## Decision outcome
 
-**Chosen: option 1.** Proposed until Gautam accepts or replaces it.
+**Chosen: option 1.** Accepted by Gautam Gupta on 31 Oct 2026. The decisions below are unchanged.
 
 - **Request size (FR-051).** The check runs on the parsed chat request, before redaction. The measured size is the UTF-8 length of the text the redactor scans: message content (a string or `text` parts), the message `name`, and tool-call `arguments` strings. Default `gateway.guardrails.max-request-bytes` is **1 MiB** (1048576). Over the limit is **413** `request_too_large`. A non-positive limit turns the check off. The 2MB codec cap stays as a separate transport limit.
 - **Placeholder identity.** Inside one request, the same entity type and the same matched text share one placeholder (`[EMAIL_1]`). Indexes increment in first-seen order per type. The same value later in the request reuses the placeholder and still counts as another occurrence. The mapping is not stored and is not stable across requests. Responses are not re-hydrated (ADR-0009).

@@ -8,7 +8,7 @@ OpenAI-compatible LLM gateway for the JVM. Application teams point an OpenAI SDK
 
 This is a portfolio project for Gautam Gupta. It is platform infrastructure, not a RAG or agent product.
 
-Requirements: [SDR-0001](docs/sdr/0001-jvm-llm-gateway-sdr.md) (APPROVED v1.0). Decisions: [ADR index](docs/adr/README.md) (ADR-0001 through ADR-0013 Accepted, ADR-0014 Proposed).
+Requirements: [SDR-0001](docs/sdr/0001-jvm-llm-gateway-sdr.md) (APPROVED v1.0). Decisions: [ADR index](docs/adr/README.md) (ADR-0001 through ADR-0014 Accepted).
 
 ## Week 1 status
 
@@ -130,7 +130,7 @@ OTEL_TRACES_EXPORT_ENABLED=true docker compose --profile observability up
 # Grafana http://127.0.0.1:3000  Prometheus http://127.0.0.1:9090  Jaeger http://127.0.0.1:16686
 ```
 
-The numeric limit, the checksum rules, per-tenant config instead of a database column, and the two extra metric series are [ADR-0014](docs/adr/0014-guardrail-limits-and-week5-metrics.md) (Proposed).
+The numeric limit, the checksum rules, per-tenant config instead of a database column, and the two extra metric series are [ADR-0014](docs/adr/0014-guardrail-limits-and-week5-metrics.md) (Accepted).
 
 ## Architecture
 
@@ -303,7 +303,7 @@ Unknown JSON fields are ignored and are not forwarded (FR-001, the "ignore" opti
 | 2 | Routing and resilience | **Done:** YAML aliases, ordered fallback, Resilience4j retry / circuit breaker / time limiter (ADR-0005), Anthropic chat and SSE. **Still open:** Ollama (FR-012) and `POST /v1/embeddings` (FR-002). |
 | 3 | Tenancy and limits | **Done:** hashed API keys, Postgres tenants, Redis token bucket, token and dollar budgets, 429 contract (ADR-0007). Daily usage ledger and 30-day partition retention (ADR-0008). |
 | 4 | Semantic cache | **Done:** Redis exact-match and vector cache, TTL plus a size bound, `X-Cache-Bypass` (ADR-0006). **Still open:** Ollama embeddings and the public `POST /v1/embeddings` route. |
-| 5 | Guardrails and observability | **Done:** PII redact-and-forward (ADR-0009), request size limit, Micrometer series including PII, provider errors, and fallbacks, OpenTelemetry traces, Grafana dashboard (ADR-0010). **Proposed:** [ADR-0014](docs/adr/0014-guardrail-limits-and-week5-metrics.md) for the size default, checksums, and the two extra series. |
+| 5 | Guardrails and observability | **Done:** PII redact-and-forward (ADR-0009), request size limit, Micrometer series including PII, provider errors, and fallbacks, OpenTelemetry traces, Grafana dashboard (ADR-0010). **Accepted:** [ADR-0014](docs/adr/0014-guardrail-limits-and-week5-metrics.md) for the size default, checksums, and the two extra series. |
 | 6 | Polish | OpenAI Java SDK contract test, JaCoCo baseline gate, load-test notes, demo script. Testcontainers for limits and the ledger already run in week 3. |
 
 ## License
